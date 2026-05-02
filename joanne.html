@@ -301,7 +301,7 @@ tbody tr:last-child td{border-bottom:none;}
         <div class="table-wrap">
           <table>
             <thead><tr>
-              <th>Supplier</th><th>Item</th><th>Color</th><th>Price(USD)</th><th>Qty</th>
+              <th>ID</th><th>Supplier</th><th>Item</th><th>Color</th><th>Price(USD)</th><th>Qty</th>
               <th>Total(USD)</th><th>Total(XCG)</th><th>Customs</th>
               <th>Grand Total(XCG)</th><th>Sell/item</th><th>Profit</th>
               <th>Month</th><th>Notes</th><th></th>
@@ -386,7 +386,7 @@ tbody tr:last-child td{border-bottom:none;}
         <div class="table-wrap">
           <table>
             <thead><tr>
-              <th>Date</th><th>Customer</th><th>Item</th><th>Color</th><th>Qty</th>
+              <th>Date</th><th>ID</th><th>Customer</th><th>Item</th><th>Color</th><th>Qty</th>
               <th>Unit(XCG)</th><th>Total(XCG)</th><th>Paid(XCG)</th>
               <th>Balance(XCG)</th><th>Status</th><th>Method</th><th>Month</th><th>Notes</th><th></th>
             </tr></thead>
@@ -543,7 +543,7 @@ function buildInventory(){
   orders.forEach(o=>{
     const k=invKey(o.item,o.color);
     stock[k]=(stock[k]||0)+o.qty;
-    meta[k]={item:o.item,color:o.color||'',sell_price:o.sell_price,supplier:o.supplier,month:getEntryMonth(o.created_at)};
+    meta[k]={item:o.item,color:o.color||'',sell_price:o.sell_price,supplier:o.supplier,month:getEntryMonth(o.created_at),order_ref:o.order_ref||''};
   });
   sales.forEach(s=>{
     const k=invKey(s.item,s.item_color);
@@ -592,7 +592,12 @@ async function addOrder(){
   if(qty<1){alert('Please enter a valid quantity.');return;}
   const totalUSD=price*qty,totalXCG=totalUSD*rate,grandXCG=totalXCG+customs;
   const profit=sell>0?(sell*qty)-grandXCG:null;
-  const row={supplier,item,color,price,qty,total_usd:totalUSD,total_xcg:totalXCG,customs,grand_xcg:grandXCG,sell_price:sell,profit,notes,rate};
+  // Generate JO-XXX ref
+  const existingRefs=orders.map(o=>o.order_ref).filter(Boolean);
+  let nextNum=1;
+  existingRefs.forEach(r=>{const n=parseInt(r.replace('JO-',''));if(!isNaN(n)&&n>=nextNum)nextNum=n+1;});
+  const order_ref='JO-'+String(nextNum).padStart(3,'0');
+  const row={supplier,item,color,price,qty,total_usd:totalUSD,total_xcg:totalXCG,customs,grand_xcg:grandXCG,sell_price:sell,profit,notes,rate,order_ref};
   setSyncStatus('syncing','Saving...');
   try{const res=await sbInsert('orders',row);orders.push(res[0]);renderOrders();populateSaleItemDropdown();clearOrderForm();setSyncStatus('synced','Synced');}
   catch(e){setSyncStatus('error','Save failed');alert('Could not save.');}
@@ -663,6 +668,7 @@ function renderOrders(){
     const oMonth=getEntryMonth(o.created_at);
     const isPrev=oMonth<curMonth;
     return`<tr>
+      <td><span style="font-family:'Courier New',monospace;font-size:12px;background:var(--teal-bg);padding:2px 7px;border-radius:5px;color:var(--teal-dark);font-weight:600;">${o.order_ref||'&#8212;'}</span></td>
       <td>${o.supplier||'&#8212;'}</td>
       <td>${o.item}${isPrev?` <span class="badge badge-prev">prev</span>`:''}</td>
       <td>${o.color||'&#8212;'}</td>
@@ -685,7 +691,7 @@ function renderOrders(){
   const tC=orders.reduce((s,o)=>s+(o.customs||0),0);
   const tG=orders.reduce((s,o)=>s+(o.grand_xcg||0),0);
   const tP=orders.filter(o=>o.profit!=null).reduce((s,o)=>s+o.profit,0);
-  tfoot.innerHTML=`<td colspan="5">Totals</td><td>${fmtUSD(tU)}</td><td>${fmtXCG(tX)}</td><td>${fmtXCG(tC)}</td><td>${fmtXCG(tG)}</td><td></td><td>${fmtXCG(tP)}</td><td colspan="3"></td>`;
+  tfoot.innerHTML=`<td colspan="6">Totals</td><td>${fmtUSD(tU)}</td><td>${fmtXCG(tX)}</td><td>${fmtXCG(tC)}</td><td>${fmtXCG(tG)}</td><td></td><td>${fmtXCG(tP)}</td><td colspan="3"></td>`;
 }
 
 // ============================================================
@@ -711,7 +717,7 @@ function populateSaleItemDropdown(){
     if(seen.has(k))return;seen.add(k);
     const qty=stock[k]||0;
     const oos=qty<=0;
-    const label=o.item+(o.color?` (${o.color})`:'')+( oos?' — OUT OF STOCK':` — ${qty} in stock`);
+    const label=(o.order_ref?o.order_ref+' · ':'')+o.item+(o.color?` (${o.color})`:'')+( oos?' — OUT OF STOCK':` — ${qty} in stock`);
     const opt=document.createElement('option');
     opt.value=k;
     opt.textContent=label;
@@ -719,6 +725,7 @@ function populateSaleItemDropdown(){
     opt.dataset.color=o.color||'';
     opt.dataset.price=o.sell_price||0;
     opt.dataset.oos=oos?'1':'0';
+    opt.dataset.ref=o.order_ref||'';
     if(oos)opt.style.color='#999';
     sel.appendChild(opt);
   });
@@ -765,7 +772,8 @@ async function addSale(){
   const item_color=opt.dataset.color||'';
   const total=qty*price,balance=total-paid;
   const status=paid===0?'Unpaid':paid>=total?'Paid':'Partial';
-  const row={sale_date:date||null,customer,item,item_color,qty,unit_price:price,total,paid,balance,status,method,notes};
+  const order_ref=opt&&opt.dataset.ref?opt.dataset.ref:'';
+  const row={sale_date:date||null,customer,item,item_color,qty,unit_price:price,total,paid,balance,status,method,notes,order_ref};
   setSyncStatus('syncing','Saving...');
   try{const res=await sbInsert('sales',row);sales.push(res[0]);renderSales();populateSaleItemDropdown();clearSaleForm();setSyncStatus('synced','Synced');}
   catch(e){setSyncStatus('error','Save failed');alert('Could not save.');}
@@ -797,7 +805,7 @@ function openEditSale(id){
     if(seen.has(k))return;seen.add(k);
     const qty=stock[k]||0;
     const oos=qty<=0;
-    const label=o.item+(o.color?` (${o.color})`:'')+( oos?' — OUT OF STOCK':` — ${qty} in stock`);
+    const label=(o.order_ref?o.order_ref+' · ':'')+o.item+(o.color?` (${o.color})`:'')+( oos?' — OUT OF STOCK':` — ${qty} in stock`);
     const sel=invKey(s.item,s.item_color)===k?'selected':'';
     itemOpts+=`<option value="${k}" data-item="${o.item}" data-color="${o.color||''}" data-price="${o.sell_price||0}" ${sel}>${label}</option>`;
   });
@@ -840,7 +848,8 @@ async function saveEditSale(){
   const item_color=opt&&opt.dataset.color?opt.dataset.color:s.item_color;
   const total=qty*price,balance=total-paid;
   const status=paid===0?'Unpaid':paid>=total?'Paid':'Partial';
-  const row={sale_date:date||null,customer,item,item_color,qty,unit_price:price,total,paid,balance,status,method,notes};
+  const order_ref=opt&&opt.dataset.ref?opt.dataset.ref:'';
+  const row={sale_date:date||null,customer,item,item_color,qty,unit_price:price,total,paid,balance,status,method,notes,order_ref};
   setSyncStatus('syncing','Saving...');
   try{
     const res=await sbUpdate('sales',editingSaleId,row);
@@ -859,7 +868,9 @@ function renderSales(){
   empty.style.display='none';
   const bc={'Paid':'badge-paid','Unpaid':'badge-unpaid','Partial':'badge-partial'};
   tbody.innerHTML=sales.map(s=>`<tr>
-    <td>${s.sale_date||'&#8212;'}</td><td>${s.customer||'&#8212;'}</td>
+    <td>${s.sale_date||'&#8212;'}</td>
+    <td>${s.order_ref?`<span style="font-family:'Courier New',monospace;font-size:12px;background:var(--teal-bg);padding:2px 7px;border-radius:5px;color:var(--teal-dark);font-weight:600;">${s.order_ref}</span>`:'&#8212;'}</td>
+    <td>${s.customer||'&#8212;'}</td>
     <td>${s.item}</td><td>${s.item_color||'&#8212;'}</td><td>${s.qty}</td>
     <td>${fmtXCG(s.unit_price)}</td><td>${fmtXCG(s.total)}</td><td>${fmtXCG(s.paid)}</td>
     <td style="color:${s.balance>0?'var(--red)':'var(--green)'}">${fmtXCG(s.balance)}</td>
@@ -875,7 +886,7 @@ function renderSales(){
   const tT=sales.reduce((s,o)=>s+(o.total||0),0);
   const tP=sales.reduce((s,o)=>s+(o.paid||0),0);
   const tB=sales.reduce((s,o)=>s+(o.balance||0),0);
-  tfoot.innerHTML=`<td colspan="6">Totals</td><td>${fmtXCG(tT)}</td><td>${fmtXCG(tP)}</td><td>${fmtXCG(tB)}</td><td colspan="5"></td>`;
+  tfoot.innerHTML=`<td colspan="7">Totals</td><td>${fmtXCG(tT)}</td><td>${fmtXCG(tP)}</td><td>${fmtXCG(tB)}</td><td colspan="5"></td>`;
 }
 
 // ============================================================
@@ -894,6 +905,7 @@ function renderInventory(){
     const isLow=qty>0&&qty<=3;
     const isPrev=m.month<curMonth;
     return`<div class="inv-card ${isOos?'out-of-stock':isLow?'low-stock':''}">
+      ${m.order_ref?`<div style="font-family:'Courier New',monospace;font-size:11px;background:var(--teal-bg);padding:2px 7px;border-radius:5px;color:var(--teal-dark);font-weight:600;display:inline-block;margin-bottom:6px;">${m.order_ref}</div>`:''}
       <div class="inv-item-name">${m.item}</div>
       <div class="inv-item-color">${m.color||'No color specified'}</div>
       <div class="inv-stock ${isOos?'out':isLow?'low':''}">${qty}</div>
