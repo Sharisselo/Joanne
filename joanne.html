@@ -221,6 +221,7 @@ tbody tr:last-child td{border-bottom:none;}
 
   <div class="tabs">
     <div class="tab active" onclick="switchTab('orders',this)">&#128230; Orders</div>
+    <div class="tab" onclick="switchTab('suppliers',this)">&#127981; Suppliers</div>
     <div class="tab" onclick="switchTab('sales',this)">&#128176; Sales</div>
     <div class="tab" onclick="switchTab('inventory',this)">&#128202; Inventory</div>
     <div class="tab" onclick="switchTab('monthly',this)">&#128197; Monthly</div>
@@ -228,6 +229,57 @@ tbody tr:last-child td{border-bottom:none;}
   </div>
 
   <div class="content">
+
+    <!-- SUPPLIERS TAB -->
+    <div id="tab-suppliers" class="tab-panel">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Add Supplier</span></div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Supplier Name</label>
+            <input type="text" id="sup_name" placeholder="e.g. Nihao Jewelry">
+          </div>
+          <div class="form-group">
+            <label>Website / Link</label>
+            <input type="text" id="sup_website" placeholder="e.g. nihaojewelry.com">
+          </div>
+          <div class="form-group">
+            <label>Contact / WhatsApp</label>
+            <input type="text" id="sup_contact" placeholder="e.g. +1 234 567 8900">
+          </div>
+          <div class="form-group">
+            <label>Country</label>
+            <input type="text" id="sup_country" placeholder="e.g. China">
+          </div>
+          <div class="form-group" style="grid-column:span 2">
+            <label>Notes</label>
+            <textarea id="sup_notes" placeholder="e.g. Use coupon JOANNE10 for 10% off..."></textarea>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" onclick="addSupplier()">+ Add Supplier</button>
+          <button class="btn btn-secondary" onclick="clearSupplierForm()">Clear</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Suppliers List</span>
+          <span id="sup-count" style="font-size:12px;color:var(--text-light);"></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Supplier Name</th><th>Website</th><th>Contact</th><th>Country</th><th>Notes</th><th></th>
+            </tr></thead>
+            <tbody id="suppliers-body"></tbody>
+          </table>
+        </div>
+        <div id="suppliers-empty" class="empty" style="display:none;">
+          <div class="empty-icon">&#127981;</div>
+          <p>No suppliers yet &mdash; add your first one above</p>
+        </div>
+      </div>
+    </div>
 
     <!-- ORDERS TAB -->
     <div id="tab-orders" class="tab-panel active">
@@ -241,7 +293,9 @@ tbody tr:last-child td{border-bottom:none;}
         <div class="form-grid">
           <div class="form-group" style="grid-column:span 2">
             <label>Supplier</label>
-            <input type="text" id="o_supplier" placeholder="e.g. Nihao Jewelry">
+            <select id="o_supplier">
+              <option value="">&#8212; Choose supplier &#8212;</option>
+            </select>
           </div>
           <div class="form-group" style="grid-column:span 2">
             <label>Item Name / Description</label>
@@ -489,7 +543,7 @@ async function launchApp(){
   document.getElementById('main-app').style.display='block';
   setSyncStatus('syncing','Loading...');
   document.getElementById('s_date').value=new Date().toISOString().split('T')[0];
-  await Promise.all([loadOrders(),loadSales()]);
+  await Promise.all([loadOrders(),loadSales(),loadSuppliers()]);
   setSyncStatus('synced','Synced');
 }
 
@@ -506,6 +560,7 @@ function switchTab(name,el){
   if(name==='overview')renderOverview();
   if(name==='inventory')renderInventory();
   if(name==='monthly')renderMonthly();
+  if(name==='suppliers'){renderSuppliers();populateSupplierDropdown();}
 }
 
 // ============================================================
@@ -579,7 +634,8 @@ function recalcOrderForm(){
 }
 
 async function addOrder(){
-  const supplier=document.getElementById('o_supplier').value.trim();
+  const supSel=document.getElementById('o_supplier');
+  const supplier=supSel.value==='__other__'?'Other':supSel.value;
   const item=document.getElementById('o_item').value.trim();
   const color=document.getElementById('o_color').value.trim();
   const price=parseFloat(document.getElementById('o_price').value)||0;
@@ -699,6 +755,82 @@ function renderOrders(){
 // ============================================================
 let sales=[];
 let editingSaleId=null;
+
+// ============================================================
+// SUPPLIERS
+// ============================================================
+let suppliers=[];
+
+async function loadSuppliers(){
+  try{suppliers=await sbSelect('suppliers');renderSuppliers();populateSupplierDropdown();}
+  catch(e){console.log('Supplier load error',e);}
+}
+
+function populateSupplierDropdown(){
+  const sel=document.getElementById('o_supplier');
+  const cur=sel.value;
+  sel.innerHTML='<option value="">&#8212; Choose supplier &#8212;</option>';
+  suppliers.forEach(s=>{
+    const opt=document.createElement('option');
+    opt.value=s.name;
+    opt.textContent=s.name+(s.country?' ('+s.country+')':'');
+    sel.appendChild(opt);
+  });
+  // also add a manual entry option
+  const other=document.createElement('option');
+  other.value='__other__';
+  other.textContent='+ Other (type manually)';
+  sel.appendChild(other);
+  if(cur)sel.value=cur;
+}
+
+async function addSupplier(){
+  const name=document.getElementById('sup_name').value.trim();
+  const website=document.getElementById('sup_website').value.trim();
+  const contact=document.getElementById('sup_contact').value.trim();
+  const country=document.getElementById('sup_country').value.trim();
+  const notes=document.getElementById('sup_notes').value.trim();
+  if(!name){alert('Please enter a supplier name.');return;}
+  setSyncStatus('syncing','Saving...');
+  try{
+    const res=await sbInsert('suppliers',{name,website,contact,country,notes});
+    suppliers.push(res[0]);
+    renderSuppliers();populateSupplierDropdown();clearSupplierForm();
+    setSyncStatus('synced','Synced');
+  }catch(e){setSyncStatus('error','Save failed');alert('Could not save.');}
+}
+
+function clearSupplierForm(){
+  ['sup_name','sup_website','sup_contact','sup_country','sup_notes'].forEach(id=>document.getElementById(id).value='');
+}
+
+async function deleteSupplier(id){
+  if(!confirm('Delete this supplier?'))return;
+  setSyncStatus('syncing','Deleting...');
+  try{
+    await sbDelete('suppliers',id);
+    suppliers=suppliers.filter(s=>s.id!==id);
+    renderSuppliers();populateSupplierDropdown();
+    setSyncStatus('synced','Synced');
+  }catch(e){setSyncStatus('error','Delete failed');}
+}
+
+function renderSuppliers(){
+  const tbody=document.getElementById('suppliers-body');
+  const empty=document.getElementById('suppliers-empty');
+  const count=document.getElementById('sup-count');
+  if(!suppliers.length){tbody.innerHTML='';empty.style.display='block';count.textContent='';return;}
+  empty.style.display='none';
+  count.textContent=suppliers.length+' suppliers';
+  tbody.innerHTML=suppliers.map(s=>`<tr>
+    <td style="font-weight:500;">${s.name}</td>
+    <td>${s.website?`<a href="https://${s.website.replace(/^https?:\/\//,'')}" target="_blank" style="color:var(--teal);">${s.website}</a>`:'&#8212;'}</td>
+    <td>${s.contact||'&#8212;'}</td>
+    <td>${s.country||'&#8212;'}</td>
+    <td style="color:var(--text-light);font-size:12px;">${s.notes||''}</td>
+    <td><button class="del-btn" onclick="deleteSupplier('${s.id}')">&#10005;</button></td>
+  </tr>`).join('');
+}
 
 async function loadSales(){
   try{sales=await sbSelect('sales');renderSales();}
