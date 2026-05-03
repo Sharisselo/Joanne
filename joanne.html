@@ -1084,7 +1084,7 @@ function renderSuppliers(){
   count.textContent=suppliers.length+' suppliers';
   tbody.innerHTML=suppliers.map(s=>`<tr>
     <td style="font-weight:500;">${s.name}</td>
-    <td>${s.website?`<a href="https://${s.website.replace(/^https?:\/\//,'')}" target="_blank" style="color:var(--teal);">${s.website}</a>`:'&#8212;'}</td>
+    <td>${s.website?'<a href="https://'+s.website.replace(/^https?:\/\//,'')+'" target="_blank" style="color:var(--teal);">'+s.website+'</a>':'&#8212;'}</td>
     <td>${s.contact||'&#8212;'}</td>
     <td>${s.country||'&#8212;'}</td>
     <td style="color:var(--text-light);font-size:12px;">${s.notes||''}</td>
