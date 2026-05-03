@@ -222,6 +222,7 @@ tbody tr:last-child td{border-bottom:none;}
   <div class="tabs">
     <div class="tab active" onclick="switchTab('orders',this)">&#128230; Orders</div>
     <div class="tab" onclick="switchTab('suppliers',this)">&#127981; Suppliers</div>
+    <div class="tab" onclick="switchTab('customers',this)">&#128101; Customers</div>
     <div class="tab" onclick="switchTab('sales',this)">&#128176; Sales</div>
     <div class="tab" onclick="switchTab('inventory',this)">&#128202; Inventory</div>
     <div class="tab" onclick="switchTab('monthly',this)">&#128197; Monthly</div>
@@ -229,6 +230,46 @@ tbody tr:last-child td{border-bottom:none;}
   </div>
 
   <div class="content">
+
+    <!-- CUSTOMERS TAB -->
+    <div id="tab-customers" class="tab-panel">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Add Customer</span></div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Full Name</label>
+            <input type="text" id="cust_name" placeholder="e.g. Maria Jacobs">
+          </div>
+          <div class="form-group">
+            <label>Phone / WhatsApp</label>
+            <input type="text" id="cust_phone" placeholder="e.g. +5999 123 4567">
+          </div>
+          <div class="form-group">
+            <label>Instagram</label>
+            <input type="text" id="cust_instagram" placeholder="e.g. @maria">
+          </div>
+          <div class="form-group" style="grid-column:span 2">
+            <label>Notes</label>
+            <textarea id="cust_notes" placeholder="e.g. Loves tropical styles..."></textarea>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" onclick="addCustomer()">+ Add Customer</button>
+          <button class="btn btn-secondary" onclick="clearCustomerForm()">Clear</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Customer Profiles</span>
+          <span id="cust-count" style="font-size:12px;color:var(--text-light);"></span>
+        </div>
+        <div id="customers-content"></div>
+        <div id="customers-empty" class="empty" style="display:none;">
+          <div class="empty-icon">&#128101;</div>
+          <p>No customers yet &mdash; add your first one above</p>
+        </div>
+      </div>
+    </div>
 
     <!-- SUPPLIERS TAB -->
     <div id="tab-suppliers" class="tab-panel">
@@ -381,8 +422,10 @@ tbody tr:last-child td{border-bottom:none;}
             <input type="date" id="s_date">
           </div>
           <div class="form-group">
-            <label>Customer Name</label>
-            <input type="text" id="s_customer" placeholder="e.g. Maria">
+            <label>Customer</label>
+            <select id="s_customer_select" onchange="onCustomerSelect()">
+              <option value="">&#8212; Choose customer &#8212;</option>
+            </select>
           </div>
           <div class="form-group" style="grid-column:span 2">
             <label>Item</label>
@@ -543,7 +586,7 @@ async function launchApp(){
   document.getElementById('main-app').style.display='block';
   setSyncStatus('syncing','Loading...');
   document.getElementById('s_date').value=new Date().toISOString().split('T')[0];
-  await Promise.all([loadOrders(),loadSales(),loadSuppliers()]);
+  await Promise.all([loadOrders(),loadSales(),loadSuppliers(),loadCustomers()]);
   setSyncStatus('synced','Synced');
 }
 
@@ -561,6 +604,7 @@ function switchTab(name,el){
   if(name==='inventory')renderInventory();
   if(name==='monthly')renderMonthly();
   if(name==='suppliers'){renderSuppliers();populateSupplierDropdown();}
+  if(name==='customers'){renderCustomers();populateCustomerDropdown();}
 }
 
 // ============================================================
@@ -605,6 +649,119 @@ function buildInventory(){
     stock[k]=(stock[k]||0)-s.qty;
   });
   return{stock,meta};
+}
+
+// ============================================================
+// CUSTOMERS
+// ============================================================
+let customers=[];
+
+async function loadCustomers(){
+  try{customers=await sbSelect('customers');renderCustomers();populateCustomerDropdown();}
+  catch(e){console.log('Customer load error',e);}
+}
+
+function populateCustomerDropdown(){
+  const sel=document.getElementById('s_customer_select');
+  const cur=sel.value;
+  sel.innerHTML='<option value="">&#8212; Choose customer &#8212;</option>';
+  customers.forEach(c=>{
+    const opt=document.createElement('option');
+    opt.value=c.name;
+    opt.textContent=c.name+(c.instagram?' ('+c.instagram+')':'');
+    sel.appendChild(opt);
+  });
+  const other=document.createElement('option');
+  other.value='__other__';
+  other.textContent='+ Other (not in list)';
+  sel.appendChild(other);
+  if(cur)sel.value=cur;
+}
+
+function onCustomerSelect(){
+  // future: auto-fill notes or preferences
+}
+
+async function addCustomer(){
+  const name=document.getElementById('cust_name').value.trim();
+  const phone=document.getElementById('cust_phone').value.trim();
+  const instagram=document.getElementById('cust_instagram').value.trim();
+  const notes=document.getElementById('cust_notes').value.trim();
+  if(!name){alert('Please enter a customer name.');return;}
+  setSyncStatus('syncing','Saving...');
+  try{
+    const res=await sbInsert('customers',{name,phone,instagram,notes});
+    customers.push(res[0]);
+    renderCustomers();populateCustomerDropdown();clearCustomerForm();
+    setSyncStatus('synced','Synced');
+  }catch(e){setSyncStatus('error','Save failed');alert('Could not save.');}
+}
+
+function clearCustomerForm(){
+  ['cust_name','cust_phone','cust_instagram','cust_notes'].forEach(id=>document.getElementById(id).value='');
+}
+
+async function deleteCustomer(id){
+  if(!confirm('Delete this customer? Their sales history will remain.'))return;
+  setSyncStatus('syncing','Deleting...');
+  try{
+    await sbDelete('customers',id);
+    customers=customers.filter(c=>c.id!==id);
+    renderCustomers();populateCustomerDropdown();
+    setSyncStatus('synced','Synced');
+  }catch(e){setSyncStatus('error','Delete failed');}
+}
+
+function renderCustomers(){
+  const el=document.getElementById('customers-content');
+  const empty=document.getElementById('customers-empty');
+  const count=document.getElementById('cust-count');
+  if(!customers.length){el.innerHTML='';empty.style.display='block';count.textContent='';return;}
+  empty.style.display='none';
+  count.textContent=customers.length+' customers';
+
+  el.innerHTML=`<div style="padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;">
+    ${customers.map(c=>{
+      const custSales=sales.filter(s=>s.customer&&s.customer.toLowerCase()===c.name.toLowerCase());
+      const totalOrders=custSales.length;
+      const totalSpend=custSales.reduce((s,o)=>s+(o.total||0),0);
+      const totalPaid=custSales.reduce((s,o)=>s+(o.paid||0),0);
+      const totalBalance=custSales.reduce((s,o)=>s+(o.balance||0),0);
+      const lastSale=custSales.length?custSales[custSales.length-1].sale_date:'';
+      return`<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--white);">
+        <div style="padding:14px 16px;background:var(--beige);display:flex;justify-content:space-between;align-items:flex-start;">
+          <div>
+            <div style="font-weight:600;font-size:15px;">&#10084; ${c.name}</div>
+            ${c.instagram?`<div style="font-size:11px;color:var(--teal);margin-top:2px;">${c.instagram}</div>`:''}
+            ${c.phone?`<div style="font-size:11px;color:var(--text-light);margin-top:1px;">&#128222; ${c.phone}</div>`:''}
+          </div>
+          <button class="del-btn" onclick="deleteCustomer('${c.id}')">&#10005;</button>
+        </div>
+        <div style="padding:12px 16px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+            <div style="text-align:center;padding:8px;background:var(--beige);border-radius:8px;">
+              <div style="font-family:'Cormorant Garamond',serif;font-size:22px;color:var(--teal);">${totalOrders}</div>
+              <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text-light);">Orders</div>
+            </div>
+            <div style="text-align:center;padding:8px;background:var(--beige);border-radius:8px;">
+              <div style="font-family:'Cormorant Garamond',serif;font-size:22px;color:var(--teal);">${fmtXCG(totalSpend)}</div>
+              <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text-light);">Total Spend</div>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--beige-mid);font-size:13px;">
+            <span>Total Paid</span>
+            <span style="color:var(--green);font-weight:500;">${fmtXCG(totalPaid)}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:5px 0;font-size:13px;">
+            <span>Balance Due</span>
+            <span style="color:${totalBalance>0?'var(--red)':'var(--green)'};font-weight:500;">${totalBalance>0?fmtXCG(totalBalance):'&#10003; Fully paid'}</span>
+          </div>
+          ${lastSale?`<div style="margin-top:8px;font-size:11px;color:var(--text-light);">Last purchase: ${lastSale}</div>`:''}
+          ${c.notes?`<div style="margin-top:6px;font-size:11px;color:var(--text-light);font-style:italic;">${c.notes}</div>`:''}
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
 }
 
 // ============================================================
@@ -891,7 +1048,8 @@ async function addSale(){
   const sel=document.getElementById('s_item_select');
   const opt=sel.options[sel.selectedIndex];
   const date=document.getElementById('s_date').value;
-  const customer=document.getElementById('s_customer').value.trim();
+  const custSel=document.getElementById('s_customer_select');
+  const customer=custSel.value==='__other__'?'Other':custSel.value;
   const qty=parseInt(document.getElementById('s_qty').value)||0;
   const price=parseFloat(document.getElementById('s_price').value)||0;
   const paidStr=document.getElementById('s_paid').value;
@@ -912,7 +1070,8 @@ async function addSale(){
 }
 
 function clearSaleForm(){
-  ['s_date','s_customer','s_qty','s_price','s_paid','s_notes'].forEach(id=>document.getElementById(id).value='');
+  ['s_date','s_qty','s_price','s_paid','s_notes'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('s_customer_select').value='';
   document.getElementById('s_method').value='';
   document.getElementById('s_item_select').value='';
   ['s_total','s_balance','s_status'].forEach(id=>{document.getElementById(id).innerHTML='&#8212;';document.getElementById(id).style.color='';});
@@ -922,7 +1081,7 @@ function clearSaleForm(){
 async function deleteSale(id){
   if(!confirm('Delete this sale?'))return;
   setSyncStatus('syncing','Deleting...');
-  try{await sbDelete('sales',id);sales=sales.filter(s=>s.id!==id);renderSales();populateSaleItemDropdown();setSyncStatus('synced','Synced');}
+  try{await sbDelete('sales',id);sales=sales.filter(s=>s.id!==id);renderSales();populateSaleItemDropdown();renderCustomers();setSyncStatus('synced','Synced');}
   catch(e){setSyncStatus('error','Delete failed');}
 }
 
@@ -943,7 +1102,13 @@ function openEditSale(id){
   });
   document.getElementById('edit-sale-form').innerHTML=`
     <div class="form-group"><label>Date</label><input type="date" id="es_date" value="${s.sale_date||''}"></div>
-    <div class="form-group"><label>Customer</label><input id="es_customer" value="${s.customer||''}"></div>
+    <div class="form-group"><label>Customer</label>
+      <select id="es_customer">
+        <option value="">&#8212; Choose &#8212;</option>
+        ${customers.map(c=>`<option value="${c.name}" ${c.name===s.customer?'selected':''}>${c.name}</option>`).join('')}
+        <option value="__other__">+ Other</option>
+      </select>
+    </div>
     <div class="form-group" style="grid-column:span 2"><label>Item</label>
       <select id="es_item_select"><option value="">&#8212; Choose &#8212;</option>${itemOpts}</select>
     </div>
@@ -970,7 +1135,8 @@ async function saveEditSale(){
   const sel=document.getElementById('es_item_select');
   const opt=sel.options[sel.selectedIndex];
   const date=document.getElementById('es_date').value;
-  const customer=document.getElementById('es_customer').value.trim();
+  const esCustSel=document.getElementById('es_customer');
+  const customer=esCustSel.value==='__other__'?'Other':esCustSel.value;
   const qty=parseInt(document.getElementById('es_qty').value)||0;
   const price=parseFloat(document.getElementById('es_price').value)||0;
   const paid=parseFloat(document.getElementById('es_paid').value)||0;
