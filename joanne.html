@@ -205,6 +205,36 @@ tbody tr:last-child td{border-bottom:none;}
   </div>
 </div>
 
+<!-- EDIT SUPPLIER MODAL -->
+<div class="modal-overlay" id="edit-supplier-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Edit Supplier</span>
+      <button class="modal-close" onclick="closeModal('edit-supplier-modal')">&times;</button>
+    </div>
+    <div class="form-grid" id="edit-supplier-form"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('edit-supplier-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEditSupplier()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT CUSTOMER MODAL -->
+<div class="modal-overlay" id="edit-customer-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Edit Customer</span>
+      <button class="modal-close" onclick="closeModal('edit-customer-modal')">&times;</button>
+    </div>
+    <div class="form-grid" id="edit-customer-form"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('edit-customer-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEditCustomer()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
 <!-- MAIN APP -->
 <div id="main-app" style="display:none;">
   <div class="header">
@@ -735,7 +765,10 @@ function renderCustomers(){
             ${c.instagram?`<div style="font-size:11px;color:var(--teal);margin-top:2px;">${c.instagram}</div>`:''}
             ${c.phone?`<div style="font-size:11px;color:var(--text-light);margin-top:1px;">&#128222; ${c.phone}</div>`:''}
           </div>
-          <button class="del-btn" onclick="deleteCustomer('${c.id}')">&#10005;</button>
+          <div style="display:flex;gap:4px;">
+            <button class="edit-btn" onclick="openEditCustomer('${c.id}')">&#9998;</button>
+            <button class="del-btn" onclick="deleteCustomer('${c.id}')">&#10005;</button>
+          </div>
         </div>
         <div style="padding:12px 16px;">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
@@ -762,6 +795,76 @@ function renderCustomers(){
       </div>`;
     }).join('')}
   </div>`;
+}
+
+// ============================================================
+// SUPPLIER EDIT
+// ============================================================
+let editingSupplierId=null;
+
+function openEditSupplier(id){
+  const s=suppliers.find(x=>x.id===id);if(!s)return;
+  editingSupplierId=id;
+  document.getElementById('edit-supplier-form').innerHTML=`
+    <div class="form-group"><label>Supplier Name</label><input id="es_name" value="${s.name||''}"></div>
+    <div class="form-group"><label>Website / Link</label><input id="es_website" value="${s.website||''}"></div>
+    <div class="form-group"><label>Contact / WhatsApp</label><input id="es_contact" value="${s.contact||''}"></div>
+    <div class="form-group"><label>Country</label><input id="es_country" value="${s.country||''}"></div>
+    <div class="form-group" style="grid-column:span 2"><label>Notes</label><textarea id="es_sup_notes">${s.notes||''}</textarea></div>
+  `;
+  document.getElementById('edit-supplier-modal').classList.add('open');
+}
+
+async function saveEditSupplier(){
+  const s=suppliers.find(x=>x.id===editingSupplierId);if(!s)return;
+  const name=document.getElementById('es_name').value.trim();
+  const website=document.getElementById('es_website').value.trim();
+  const contact=document.getElementById('es_contact').value.trim();
+  const country=document.getElementById('es_country').value.trim();
+  const notes=document.getElementById('es_sup_notes').value.trim();
+  if(!name){alert('Please enter a supplier name.');return;}
+  setSyncStatus('syncing','Saving...');
+  try{
+    const res=await sbUpdate('suppliers',editingSupplierId,{name,website,contact,country,notes});
+    const idx=suppliers.findIndex(x=>x.id===editingSupplierId);
+    if(res&&res[0])suppliers[idx]=res[0];else Object.assign(suppliers[idx],{name,website,contact,country,notes});
+    renderSuppliers();populateSupplierDropdown();
+    closeModal('edit-supplier-modal');setSyncStatus('synced','Synced');
+  }catch(e){setSyncStatus('error','Save failed');alert('Could not save.');}
+}
+
+// ============================================================
+// CUSTOMER EDIT
+// ============================================================
+let editingCustomerId=null;
+
+function openEditCustomer(id){
+  const c=customers.find(x=>x.id===id);if(!c)return;
+  editingCustomerId=id;
+  document.getElementById('edit-customer-form').innerHTML=`
+    <div class="form-group"><label>Full Name</label><input id="ec_name" value="${c.name||''}"></div>
+    <div class="form-group"><label>Phone / WhatsApp</label><input id="ec_phone" value="${c.phone||''}"></div>
+    <div class="form-group"><label>Instagram</label><input id="ec_instagram" value="${c.instagram||''}"></div>
+    <div class="form-group" style="grid-column:span 2"><label>Notes</label><textarea id="ec_notes">${c.notes||''}</textarea></div>
+  `;
+  document.getElementById('edit-customer-modal').classList.add('open');
+}
+
+async function saveEditCustomer(){
+  const c=customers.find(x=>x.id===editingCustomerId);if(!c)return;
+  const name=document.getElementById('ec_name').value.trim();
+  const phone=document.getElementById('ec_phone').value.trim();
+  const instagram=document.getElementById('ec_instagram').value.trim();
+  const notes=document.getElementById('ec_notes').value.trim();
+  if(!name){alert('Please enter a customer name.');return;}
+  setSyncStatus('syncing','Saving...');
+  try{
+    const res=await sbUpdate('customers',editingCustomerId,{name,phone,instagram,notes});
+    const idx=customers.findIndex(x=>x.id===editingCustomerId);
+    if(res&&res[0])customers[idx]=res[0];else Object.assign(customers[idx],{name,phone,instagram,notes});
+    renderCustomers();populateCustomerDropdown();
+    closeModal('edit-customer-modal');setSyncStatus('synced','Synced');
+  }catch(e){setSyncStatus('error','Save failed');alert('Could not save.');}
 }
 
 // ============================================================
@@ -985,7 +1088,10 @@ function renderSuppliers(){
     <td>${s.contact||'&#8212;'}</td>
     <td>${s.country||'&#8212;'}</td>
     <td style="color:var(--text-light);font-size:12px;">${s.notes||''}</td>
-    <td><button class="del-btn" onclick="deleteSupplier('${s.id}')">&#10005;</button></td>
+    <td style="white-space:nowrap;">
+      <button class="edit-btn" onclick="openEditSupplier('${s.id}')">&#9998;</button>
+      <button class="del-btn" onclick="deleteSupplier('${s.id}')">&#10005;</button>
+    </td>
   </tr>`).join('');
 }
 
