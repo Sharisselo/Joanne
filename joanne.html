@@ -1239,8 +1239,22 @@ async function addOrder(){
   const order_ref='JO-'+String(nextNum).padStart(3,'0');
   const row={supplier,item,color,price,qty,total_usd:totalUSD,total_xcg:totalXCG,customs,grand_xcg:grandXCG,sell_price:sell,profit,notes,rate,order_ref};
   setSyncStatus('syncing','Saving...');
-  try{const res=await sbInsert('orders',row);orders.push(res[0]);renderOrders();populateSaleItemDropdown();clearOrderForm();setSyncStatus('synced','Synced');}
-  catch(e){setSyncStatus('error','Save failed');alert('Could not save.');}
+  try{
+    const res=await sbInsert('orders',row);
+    const newOrder=res[0];
+    const imgFile=document.getElementById('o_image').files[0];
+    if(imgFile){
+      setSyncStatus('syncing','Uploading image...');
+      try{
+        const url=await uploadImage(imgFile,newOrder.id);
+        await sbUpdate('orders',newOrder.id,{image_url:url});
+        newOrder.image_url=url;
+      }catch(imgErr){console.log('Image upload error',imgErr);}
+    }
+    orders.push(newOrder);
+    renderOrders();populateSaleItemDropdown();populateClaimOrderDropdown();clearOrderForm();
+    setSyncStatus('synced','Synced');
+  }catch(e){setSyncStatus('error','Save failed');alert('Could not save.');}
 }
 
 // Image preview
