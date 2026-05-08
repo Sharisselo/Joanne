@@ -703,12 +703,26 @@ async function connectSupabase(){
   const url=document.getElementById('cfg_url').value.trim();
   const key=document.getElementById('cfg_key').value.trim();
   const errEl=document.getElementById('setup-error');
+  const btn=document.querySelector('.setup-btn');
   errEl.style.display='none';
   if(!url||!key){errEl.textContent='Please fill in both fields.';errEl.style.display='block';return;}
   if(!url.includes('supabase.co')){errEl.textContent='URL should contain supabase.co';errEl.style.display='block';return;}
+  btn.textContent='Connecting...';
+  btn.disabled=true;
   saveConfig(url,key);
-  try{await sbSelect('orders');launchApp();}
-  catch(e){errEl.textContent='Could not connect. Check your URL and key, and make sure the tables are created.';errEl.style.display='block';localStorage.removeItem(CFG_KEY);}
+  try{
+    // Use a timeout so it never hangs silently
+    const timeout=new Promise((_,reject)=>setTimeout(()=>reject(new Error('Timeout')),8000));
+    await Promise.race([sbSelect('orders'),timeout]);
+    launchApp();
+  }catch(e){
+    console.log('Connect error:',e);
+    errEl.textContent='Could not connect: '+e.message+'. Check your URL and key.';
+    errEl.style.display='block';
+    localStorage.removeItem(CFG_KEY);
+    btn.textContent='Connect & Start ➡';
+    btn.disabled=false;
+  }
 }
 
 async function launchApp(){
@@ -716,7 +730,8 @@ async function launchApp(){
   document.getElementById('main-app').style.display='block';
   setSyncStatus('syncing','Loading...');
   document.getElementById('s_date').value=new Date().toISOString().split('T')[0];
-  await Promise.all([loadOrders(),loadSales(),loadSuppliers(),loadCustomers(),loadClaims()]);
+  // Load each independently so one failure doesn't block the rest
+  await Promise.allSettled([loadOrders(),loadSales(),loadSuppliers(),loadCustomers(),loadClaims()]);
   loadMarkup();
   setSyncStatus('synced','Synced');
 }
@@ -1284,7 +1299,7 @@ function openEditOrder(id){
       <input type="file" id="eo_image" accept="image/*" style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-family:'Jost',sans-serif;font-size:13px;background:var(--beige);width:100%;cursor:pointer;">
       <div style="font-size:11px;color:var(--text-light);margin-top:4px;">${o.image_url?'Upload a new photo to replace the current one':'No photo yet — upload one now'}</div>
     </div>
-  \`;
+  `;
   document.getElementById('edit-order-modal').classList.add('open');
 }
 
