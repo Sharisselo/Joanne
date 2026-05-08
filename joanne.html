@@ -505,6 +505,13 @@ tbody tr:last-child td{border-bottom:none;}
             <label>Notes</label>
             <textarea id="o_notes" placeholder="Optional notes..."></textarea>
           </div>
+          <div class="form-group" style="grid-column:span 2">
+            <label>Item Photo</label>
+            <input type="file" id="o_image" accept="image/*" style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-family:'Jost',sans-serif;font-size:13px;background:var(--beige);width:100%;cursor:pointer;">
+            <div id="o_image_preview" style="margin-top:8px;display:none;">
+              <img id="o_image_preview_img" style="height:80px;border-radius:8px;border:1px solid var(--border);object-fit:cover;">
+            </div>
+          </div>
         </div>
         <div class="form-actions">
           <button class="btn btn-primary" onclick="addOrder()">+ Add Order</button>
@@ -519,7 +526,7 @@ tbody tr:last-child td{border-bottom:none;}
         <div class="table-wrap">
           <table>
             <thead><tr>
-              <th>ID</th><th>Supplier</th><th>Item</th><th>Color</th><th>Price(USD)</th><th>Qty</th>
+              <th>ID</th><th>Supplier</th><th>Photo</th><th>Item</th><th>Color</th><th>Price(USD)</th><th>Qty</th>
               <th>Total(USD)</th><th>Total(XCG)</th><th>Customs</th>
               <th>Grand Total(XCG)</th><th>Sell/item</th><th>Profit</th>
               <th>Month</th><th>Notes</th><th></th>
@@ -776,7 +783,7 @@ function buildInventory(){
   orders.forEach(o=>{
     const k=invKey(o.item,o.color);
     stock[k]=(stock[k]||0)+o.qty;
-    meta[k]={item:o.item,color:o.color||'',sell_price:o.sell_price,supplier:o.supplier,month:getEntryMonth(o.created_at),order_ref:o.order_ref||''};
+    meta[k]={item:o.item,color:o.color||'',sell_price:o.sell_price,supplier:o.supplier,month:getEntryMonth(o.created_at),order_ref:o.order_ref||'',image_url:o.image_url||''};
   });
   sales.forEach(s=>{
     const k=invKey(s.item,s.item_color);
@@ -1183,6 +1190,18 @@ function recalcOrderForm(){
   else{pEl.innerHTML='&#8212;';pEl.style.color='';}
 }
 
+async function uploadImage(file, orderId){
+  const ext=file.name.split('.').pop();
+  const path=`orders/${orderId}.${ext}`;
+  const res=await fetch(`${SUPABASE_URL}/storage/v1/object/item-images/${path}`,{
+    method:'POST',
+    headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':file.type,'x-upsert':'true'},
+    body:file
+  });
+  if(!res.ok)throw new Error('Image upload failed');
+  return`${SUPABASE_URL}/storage/v1/object/public/item-images/${path}`;
+}
+
 async function addOrder(){
   const supSel=document.getElementById('o_supplier');
   const supplier=supSel.value==='__other__'?'Other':supSel.value;
@@ -1209,10 +1228,30 @@ async function addOrder(){
   catch(e){setSyncStatus('error','Save failed');alert('Could not save.');}
 }
 
+// Image preview
+document.addEventListener('DOMContentLoaded',()=>{
+  const imgInput=document.getElementById('o_image');
+  if(imgInput){
+    imgInput.addEventListener('change',function(){
+      const file=this.files[0];
+      if(file){
+        const reader=new FileReader();
+        reader.onload=e=>{
+          document.getElementById('o_image_preview_img').src=e.target.result;
+          document.getElementById('o_image_preview').style.display='block';
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+  }
+});
+
 function clearOrderForm(){
   ['o_supplier','o_item','o_color','o_price','o_qty','o_customs','o_sell','o_notes'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('o_sell').dataset.manual='0';
   const hint=document.getElementById('o_sell_hint');if(hint)hint.textContent='';
+  const imgInput=document.getElementById('o_image');if(imgInput)imgInput.value='';
+  document.getElementById('o_image_preview').style.display='none';
   ['o_total_usd','o_total_xcg','o_grand_xcg','o_profit'].forEach(id=>{document.getElementById(id).innerHTML='&#8212;';document.getElementById(id).style.color='';});
 }
 
@@ -1239,7 +1278,13 @@ function openEditOrder(id){
       <div style="font-size:11px;color:var(--teal);margin-top:3px;">Suggested: ${o.grand_xcg&&o.qty?fmtXCG(o.grand_xcg/o.qty*getMarkup()):''}</div>
     </div>
     <div class="form-group" style="grid-column:span 2"><label>Notes</label><textarea id="eo_notes">${o.notes||''}</textarea></div>
-  `;
+    <div class="form-group" style="grid-column:span 2">
+      <label>Item Photo</label>
+      ${o.image_url?`<div style="margin-bottom:8px;"><img src="${o.image_url}" style="height:80px;border-radius:8px;border:1px solid var(--border);object-fit:cover;"></div>`:''}
+      <input type="file" id="eo_image" accept="image/*" style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-family:'Jost',sans-serif;font-size:13px;background:var(--beige);width:100%;cursor:pointer;">
+      <div style="font-size:11px;color:var(--text-light);margin-top:4px;">${o.image_url?'Upload a new photo to replace the current one':'No photo yet — upload one now'}</div>
+    </div>
+  \`;
   document.getElementById('edit-order-modal').classList.add('open');
 }
 
@@ -1259,6 +1304,14 @@ async function saveEditOrder(){
   const row={supplier,item,color,price,qty,total_usd:totalUSD,total_xcg:totalXCG,customs,grand_xcg:grandXCG,sell_price:sell,profit,notes};
   setSyncStatus('syncing','Saving...');
   try{
+    const imgFile=document.getElementById('eo_image')&&document.getElementById('eo_image').files[0];
+    if(imgFile){
+      setSyncStatus('syncing','Uploading image...');
+      try{
+        const url=await uploadImage(imgFile,editingOrderId);
+        row.image_url=url;
+      }catch(e){console.log('Image upload error',e);}
+    }
     const res=await sbUpdate('orders',editingOrderId,row);
     const idx=orders.findIndex(x=>x.id===editingOrderId);
     if(res&&res[0])orders[idx]=res[0];
@@ -1282,6 +1335,7 @@ function renderOrders(){
     return`<tr>
       <td><span style="font-family:'Courier New',monospace;font-size:12px;background:var(--teal-bg);padding:2px 7px;border-radius:5px;color:var(--teal-dark);font-weight:600;">${o.order_ref||'&#8212;'}</span></td>
       <td>${o.supplier||'&#8212;'}</td>
+      <td>${o.image_url?`<img src="${o.image_url}" style="height:36px;width:36px;object-fit:cover;border-radius:6px;border:1px solid var(--border);">`:'&#8212;'}</td>
       <td>${o.item}${isPrev?` <span class="badge badge-prev">prev</span>`:''}</td>
       <td>${o.color||'&#8212;'}</td>
       <td>${fmtUSD(o.price)}</td><td>${o.qty}</td>
@@ -1305,7 +1359,7 @@ function renderOrders(){
   const tP=orders.filter(o=>o.profit!=null).reduce((s,o)=>s+o.profit,0);
   // Total potential revenue = sell_price * qty for each order
   const tSell=orders.filter(o=>o.sell_price>0).reduce((s,o)=>s+(o.sell_price*o.qty),0);
-  tfoot.innerHTML=`<td colspan="6">Totals</td><td>${fmtUSD(tU)}</td><td>${fmtXCG(tX)}</td><td>${fmtXCG(tC)}</td><td>${fmtXCG(tG)}</td><td>${tSell>0?fmtXCG(tSell):'&#8212;'}</td><td>${fmtXCG(tP)}</td><td colspan="3"></td>`;
+  tfoot.innerHTML=`<td colspan="7">Totals</td><td>${fmtUSD(tU)}</td><td>${fmtXCG(tX)}</td><td>${fmtXCG(tC)}</td><td>${fmtXCG(tG)}</td><td>${tSell>0?fmtXCG(tSell):'&#8212;'}</td><td>${fmtXCG(tP)}</td><td colspan="3"></td>`;
 }
 
 // ============================================================
@@ -1607,6 +1661,7 @@ function renderInventory(){
     const isLow=qty>0&&qty<=3;
     const isPrev=m.month<curMonth;
     return`<div class="inv-card ${isOos?'out-of-stock':isLow?'low-stock':''}">
+      ${m.image_url?`<img src="${m.image_url}" style="width:100%;height:120px;object-fit:cover;border-radius:8px;margin-bottom:10px;border:1px solid var(--border);">`:'<div style="width:100%;height:80px;background:var(--beige-dark);border-radius:8px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;color:var(--text-light);font-size:11px;">No photo</div>'}
       ${m.order_ref?`<div style="font-family:'Courier New',monospace;font-size:11px;background:var(--teal-bg);padding:2px 7px;border-radius:5px;color:var(--teal-dark);font-weight:600;display:inline-block;margin-bottom:6px;">${m.order_ref}</div>`:''}
       <div class="inv-item-name">${m.item}</div>
       <div class="inv-item-color">${m.color||'No color specified'}</div>
