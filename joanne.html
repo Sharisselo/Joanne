@@ -1333,13 +1333,20 @@ async function saveEditOrder(){
   const row={supplier,item,color,price,qty,total_usd:totalUSD,total_xcg:totalXCG,customs,grand_xcg:grandXCG,sell_price:sell,profit,notes};
   setSyncStatus('syncing','Saving...');
   try{
-    const imgFile=document.getElementById('eo_image')&&document.getElementById('eo_image').files[0];
+    const eoImageEl=document.getElementById('eo_image');
+    const imgFile=eoImageEl&&eoImageEl.files&&eoImageEl.files[0];
+    console.log('Image file found:',imgFile?imgFile.name:'none');
     if(imgFile){
       setSyncStatus('syncing','Uploading image...');
       try{
+        console.log('Uploading to:',SUPABASE_URL+'/storage/v1/object/item-images/orders/'+editingOrderId+'.'+imgFile.name.split('.').pop());
         const url=await uploadImage(imgFile,editingOrderId);
+        console.log('Upload success, URL:',url);
         row.image_url=url;
-      }catch(e){console.log('Image upload error',e);}
+      }catch(imgErr){
+        console.error('Image upload failed:',imgErr);
+        alert('Image upload failed: '+imgErr.message+'. Check Supabase Storage bucket settings.');
+      }
     }
     const res=await sbUpdate('orders',editingOrderId,row);
     const idx=orders.findIndex(x=>x.id===editingOrderId);
