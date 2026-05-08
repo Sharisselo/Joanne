@@ -253,6 +253,7 @@ tbody tr:last-child td{border-bottom:none;}
     <div class="tab active" onclick="switchTab('orders',this)">&#128230; Orders</div>
     <div class="tab" onclick="switchTab('suppliers',this)">&#127981; Suppliers</div>
     <div class="tab" onclick="switchTab('customers',this)">&#128101; Customers</div>
+    <div class="tab" onclick="switchTab('claims',this)">&#9888;&#65039; Claims</div>
     <div class="tab" onclick="switchTab('sales',this)">&#128176; Sales</div>
     <div class="tab" onclick="switchTab('inventory',this)">&#128202; Inventory</div>
     <div class="tab" onclick="switchTab('monthly',this)">&#128197; Monthly</div>
@@ -297,6 +298,92 @@ tbody tr:last-child td{border-bottom:none;}
         <div id="customers-empty" class="empty" style="display:none;">
           <div class="empty-icon">&#128101;</div>
           <p>No customers yet &mdash; add your first one above</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- CLAIMS TAB -->
+    <div id="tab-claims" class="tab-panel">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Log a Claim</span></div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Order Ref</label>
+            <select id="cl_order_ref" onchange="onClaimOrderSelect()">
+              <option value="">&#8212; Choose order &#8212;</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Supplier</label>
+            <div class="calc-display" id="cl_supplier">&#8212;</div>
+          </div>
+          <div class="form-group" style="grid-column:span 2">
+            <label>Item</label>
+            <div class="calc-display" id="cl_item_display">&#8212;</div>
+          </div>
+          <div class="form-group">
+            <label>Issue Type</label>
+            <select id="cl_issue_type">
+              <option value="">&#8212; Select issue &#8212;</option>
+              <option value="Item not arrived">&#128230; Item not arrived</option>
+              <option value="Out of stock when shipped">&#10060; Out of stock when shipped</option>
+              <option value="Arrived damaged">&#128148; Arrived damaged</option>
+              <option value="Wrong item sent">&#128257; Wrong item sent</option>
+              <option value="Other">&#10067; Other</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Qty Affected</label>
+            <input type="number" id="cl_qty" placeholder="1" min="1" oninput="recalcClaim()">
+          </div>
+          <div class="form-group">
+            <label>Unit Cost Paid (XCG)</label>
+            <div class="calc-display" id="cl_unit_cost">&#8212;</div>
+          </div>
+          <div class="form-group">
+            <label>Refund Amount (XCG)</label>
+            <div class="calc-display" id="cl_refund" style="color:var(--red);font-weight:600;">&#8212;</div>
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select id="cl_status">
+              <option value="Pending">&#9203; Pending</option>
+              <option value="Refunded">&#9989; Refunded</option>
+              <option value="Resolved">&#10003; Resolved</option>
+            </select>
+          </div>
+          <div class="form-group" style="grid-column:span 2">
+            <label>Notes</label>
+            <textarea id="cl_notes" placeholder="e.g. Contacted supplier on WhatsApp, waiting for response..."></textarea>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" onclick="addClaim()">+ Log Claim</button>
+          <button class="btn btn-secondary" onclick="clearClaimForm()">Clear</button>
+        </div>
+      </div>
+
+      <!-- Claims summary stats -->
+      <div class="stats" id="claims-stats"></div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Claims History</span>
+          <span id="claims-count" style="font-size:12px;color:var(--text-light);"></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Order Ref</th><th>Supplier</th><th>Item</th><th>Color</th>
+              <th>Issue</th><th>Qty</th><th>Refund (XCG)</th>
+              <th>Status</th><th>Notes</th><th></th>
+            </tr></thead>
+            <tbody id="claims-body"></tbody>
+          </table>
+        </div>
+        <div id="claims-empty" class="empty" style="display:none;">
+          <div class="empty-icon">&#9989;</div>
+          <p>No claims yet &mdash; great news! &#127881;</p>
         </div>
       </div>
     </div>
@@ -622,7 +709,7 @@ async function launchApp(){
   document.getElementById('main-app').style.display='block';
   setSyncStatus('syncing','Loading...');
   document.getElementById('s_date').value=new Date().toISOString().split('T')[0];
-  await Promise.all([loadOrders(),loadSales(),loadSuppliers(),loadCustomers()]);
+  await Promise.all([loadOrders(),loadSales(),loadSuppliers(),loadCustomers(),loadClaims()]);
   loadMarkup();
   setSyncStatus('synced','Synced');
 }
@@ -642,6 +729,7 @@ function switchTab(name,el){
   if(name==='monthly')renderMonthly();
   if(name==='suppliers'){renderSuppliers();populateSupplierDropdown();}
   if(name==='customers'){renderCustomers();populateCustomerDropdown();}
+  if(name==='claims'){renderClaims();populateClaimOrderDropdown();}
 }
 
 // ============================================================
@@ -693,6 +781,11 @@ function buildInventory(){
   sales.forEach(s=>{
     const k=invKey(s.item,s.item_color);
     stock[k]=(stock[k]||0)-s.qty;
+  });
+  // also deduct claimed/missing items from stock
+  claims.forEach(c=>{
+    const k=invKey(c.item,c.item_color);
+    if(stock[k]!==undefined)stock[k]=(stock[k]||0)-c.qty_affected;
   });
   return{stock,meta};
 }
@@ -814,6 +907,174 @@ function renderCustomers(){
 }
 
 // ============================================================
+// CLAIMS
+// ============================================================
+let claims=[];
+let claimUnitCost=0;
+let claimOrderData=null;
+
+async function loadClaims(){
+  try{claims=await sbSelect('claims');renderClaims();}
+  catch(e){console.log('Claims load error',e);}
+}
+
+function populateClaimOrderDropdown(){
+  const sel=document.getElementById('cl_order_ref');
+  if(!sel)return;
+  const cur=sel.value;
+  sel.innerHTML='<option value="">&#8212; Choose order &#8212;</option>';
+  orders.forEach(o=>{
+    const opt=document.createElement('option');
+    opt.value=o.id;
+    opt.textContent=(o.order_ref||'?')+' — '+o.item+(o.color?' ('+o.color+')':'');
+    opt.dataset.supplier=o.supplier||'';
+    opt.dataset.item=o.item||'';
+    opt.dataset.color=o.color||'';
+    opt.dataset.grand=o.grand_xcg||0;
+    opt.dataset.qty=o.qty||1;
+    opt.dataset.ref=o.order_ref||'';
+    sel.appendChild(opt);
+  });
+  if(cur)sel.value=cur;
+}
+
+function onClaimOrderSelect(){
+  const sel=document.getElementById('cl_order_ref');
+  const opt=sel.options[sel.selectedIndex];
+  if(!opt||!opt.dataset.item){
+    document.getElementById('cl_supplier').innerHTML='&#8212;';
+    document.getElementById('cl_item_display').innerHTML='&#8212;';
+    document.getElementById('cl_unit_cost').innerHTML='&#8212;';
+    claimUnitCost=0;claimOrderData=null;
+    return;
+  }
+  const unitCost=opt.dataset.qty>0?parseFloat(opt.dataset.grand)/parseInt(opt.dataset.qty):0;
+  claimUnitCost=unitCost;
+  claimOrderData=opt.dataset;
+  document.getElementById('cl_supplier').innerHTML=opt.dataset.supplier||'&#8212;';
+  document.getElementById('cl_item_display').innerHTML=opt.dataset.item+(opt.dataset.color?' ('+opt.dataset.color+')':'');
+  document.getElementById('cl_unit_cost').innerHTML=fmtXCG(unitCost);
+  recalcClaim();
+}
+
+function recalcClaim(){
+  const qty=parseInt(document.getElementById('cl_qty').value)||0;
+  const refund=qty*claimUnitCost;
+  document.getElementById('cl_refund').innerHTML=refund>0?fmtXCG(refund):'&#8212;';
+}
+
+async function addClaim(){
+  const sel=document.getElementById('cl_order_ref');
+  const opt=sel.options[sel.selectedIndex];
+  if(!opt||!opt.dataset.item){alert('Please select an order.');return;}
+  const issue_type=document.getElementById('cl_issue_type').value;
+  const qty=parseInt(document.getElementById('cl_qty').value)||0;
+  const status=document.getElementById('cl_status').value;
+  const notes=document.getElementById('cl_notes').value.trim();
+  if(!issue_type){alert('Please select an issue type.');return;}
+  if(qty<1){alert('Please enter a valid quantity.');return;}
+  const refund_amount=qty*claimUnitCost;
+  const row={
+    order_ref:opt.dataset.ref||'',
+    supplier:opt.dataset.supplier||'',
+    item:opt.dataset.item||'',
+    item_color:opt.dataset.color||'',
+    issue_type,qty_affected:qty,
+    refund_amount,status,notes
+  };
+  setSyncStatus('syncing','Saving...');
+  try{
+    const res=await sbInsert('claims',row);
+    claims.push(res[0]);
+    renderClaims();renderInventory();
+    clearClaimForm();setSyncStatus('synced','Synced');
+  }catch(e){setSyncStatus('error','Save failed');alert('Could not save.');}
+}
+
+function clearClaimForm(){
+  document.getElementById('cl_order_ref').value='';
+  document.getElementById('cl_issue_type').value='';
+  document.getElementById('cl_qty').value='';
+  document.getElementById('cl_status').value='Pending';
+  document.getElementById('cl_notes').value='';
+  document.getElementById('cl_supplier').innerHTML='&#8212;';
+  document.getElementById('cl_item_display').innerHTML='&#8212;';
+  document.getElementById('cl_unit_cost').innerHTML='&#8212;';
+  document.getElementById('cl_refund').innerHTML='&#8212;';
+  claimUnitCost=0;claimOrderData=null;
+}
+
+async function deleteClaim(id){
+  if(!confirm('Delete this claim?'))return;
+  setSyncStatus('syncing','Deleting...');
+  try{
+    await sbDelete('claims',id);
+    claims=claims.filter(c=>c.id!==id);
+    renderClaims();renderInventory();
+    setSyncStatus('synced','Synced');
+  }catch(e){setSyncStatus('error','Delete failed');}
+}
+
+async function updateClaimStatus(id, status){
+  setSyncStatus('syncing','Saving...');
+  try{
+    await sbUpdate('claims',id,{status});
+    const idx=claims.findIndex(c=>c.id===id);
+    if(idx>=0)claims[idx].status=status;
+    renderClaims();setSyncStatus('synced','Synced');
+  }catch(e){setSyncStatus('error','Save failed');}
+}
+
+function renderClaims(){
+  const tbody=document.getElementById('claims-body');
+  const empty=document.getElementById('claims-empty');
+  const count=document.getElementById('claims-count');
+  const statsEl=document.getElementById('claims-stats');
+  if(!claims.length){
+    tbody.innerHTML='';empty.style.display='block';
+    count.textContent='';
+    statsEl.innerHTML='';
+    return;
+  }
+  empty.style.display='none';
+  count.textContent=claims.length+' claims';
+
+  // Stats
+  const totalRefund=claims.reduce((s,c)=>s+(c.refund_amount||0),0);
+  const pending=claims.filter(c=>c.status==='Pending').length;
+  const refunded=claims.filter(c=>c.status==='Refunded').reduce((s,c)=>s+(c.refund_amount||0),0);
+  const totalQty=claims.reduce((s,c)=>s+(c.qty_affected||0),0);
+  statsEl.innerHTML=`
+    <div class="stat-card"><div class="stat-label">Total Claims</div><div class="stat-value">${claims.length}</div></div>
+    <div class="stat-card"><div class="stat-label">Items Affected</div><div class="stat-value red">${totalQty}</div></div>
+    <div class="stat-card"><div class="stat-label">Total to Recover (XCG)</div><div class="stat-value red">${fmtXCG(totalRefund)}</div></div>
+    <div class="stat-card"><div class="stat-label">Already Refunded (XCG)</div><div class="stat-value green">${fmtXCG(refunded)}</div></div>
+    <div class="stat-card"><div class="stat-label">Pending Claims</div><div class="stat-value ${pending>0?'red':''}">${pending}</div></div>`;
+
+  const issueIcons={'Item not arrived':'&#128230;','Out of stock when shipped':'&#10060;','Arrived damaged':'&#128148;','Wrong item sent':'&#128257;','Other':'&#10067;'};
+  const statusColors={'Pending':'var(--orange)','Refunded':'var(--green)','Resolved':'var(--teal)'};
+
+  tbody.innerHTML=claims.map(c=>`<tr>
+    <td><span style="font-family:'Courier New',monospace;font-size:12px;background:var(--teal-bg);padding:2px 7px;border-radius:5px;color:var(--teal-dark);font-weight:600;">${c.order_ref||'&#8212;'}</span></td>
+    <td>${c.supplier||'&#8212;'}</td>
+    <td>${c.item||'&#8212;'}</td>
+    <td>${c.item_color||'&#8212;'}</td>
+    <td>${issueIcons[c.issue_type]||''} ${c.issue_type||'&#8212;'}</td>
+    <td>${c.qty_affected}</td>
+    <td style="color:var(--red);font-weight:600;">${fmtXCG(c.refund_amount)}</td>
+    <td>
+      <select onchange="updateClaimStatus('${c.id}',this.value)" style="border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-family:'Jost',sans-serif;font-size:12px;color:${statusColors[c.status]||'inherit'};background:var(--beige);outline:none;cursor:pointer;">
+        <option ${c.status==='Pending'?'selected':''}>Pending</option>
+        <option ${c.status==='Refunded'?'selected':''}>Refunded</option>
+        <option ${c.status==='Resolved'?'selected':''}>Resolved</option>
+      </select>
+    </td>
+    <td style="color:var(--text-light);font-size:12px;">${c.notes||''}</td>
+    <td><button class="del-btn" onclick="deleteClaim('${c.id}')">&#10005;</button></td>
+  </tr>`).join('');
+}
+
+// ============================================================
 // SUPPLIER EDIT
 // ============================================================
 let editingSupplierId=null;
@@ -890,7 +1151,7 @@ let orders=[];
 let editingOrderId=null;
 
 async function loadOrders(){
-  try{orders=await sbSelect('orders');renderOrders();populateSaleItemDropdown();}
+  try{orders=await sbSelect('orders');renderOrders();populateSaleItemDropdown();populateClaimOrderDropdown();}
   catch(e){setSyncStatus('error','Sync error');}
 }
 
