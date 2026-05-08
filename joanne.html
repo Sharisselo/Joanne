@@ -1303,7 +1303,9 @@ function renderOrders(){
   const tC=orders.reduce((s,o)=>s+(o.customs||0),0);
   const tG=orders.reduce((s,o)=>s+(o.grand_xcg||0),0);
   const tP=orders.filter(o=>o.profit!=null).reduce((s,o)=>s+o.profit,0);
-  tfoot.innerHTML=`<td colspan="6">Totals</td><td>${fmtUSD(tU)}</td><td>${fmtXCG(tX)}</td><td>${fmtXCG(tC)}</td><td>${fmtXCG(tG)}</td><td></td><td>${fmtXCG(tP)}</td><td colspan="3"></td>`;
+  // Total potential revenue = sell_price * qty for each order
+  const tSell=orders.filter(o=>o.sell_price>0).reduce((s,o)=>s+(o.sell_price*o.qty),0);
+  tfoot.innerHTML=`<td colspan="6">Totals</td><td>${fmtUSD(tU)}</td><td>${fmtXCG(tX)}</td><td>${fmtXCG(tC)}</td><td>${fmtXCG(tG)}</td><td>${tSell>0?fmtXCG(tSell):'&#8212;'}</td><td>${fmtXCG(tP)}</td><td colspan="3"></td>`;
 }
 
 // ============================================================
