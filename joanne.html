@@ -358,7 +358,11 @@ tbody tr:last-child td{border-bottom:none;}
         <label>USD &rarr; XCG Rate:</label>
         <input type="number" id="exchangeRate" value="1.82" step="0.01" oninput="recalcOrderForm()">
         <span style="font-size:12px;color:var(--text-light);">Update anytime</span>
-      </div>
+      <span style="margin-left:16px;width:1px;height:24px;background:var(--border);display:inline-block;"></span>
+      <label style="margin-left:8px;">Markup Multiplier:</label>
+      <input type="number" id="markupMultiplier" value="2.5" step="0.1" min="1" oninput="saveMarkup();recalcOrderForm();" style="width:80px;border:1px solid var(--teal);border-radius:6px;padding:6px 10px;font-family:'Jost',sans-serif;font-size:13px;font-weight:600;color:var(--teal-dark);background:var(--white);outline:none;text-align:center;">
+      <span style="font-size:12px;color:var(--text-light);">Grand Total &times; multiplier = suggested sell price</span>
+    </div>
       <div class="card">
         <div class="card-header"><span class="card-title">Add Purchase Order</span></div>
         <div class="form-grid">
@@ -402,7 +406,9 @@ tbody tr:last-child td{border-bottom:none;}
           </div>
           <div class="form-group">
             <label>Selling Price per item (XCG)</label>
-            <input type="number" id="o_sell" placeholder="0.00" step="0.01" oninput="recalcOrderForm()">
+            <input type="number" id="o_sell" placeholder="Auto-calculated" step="0.01"
+              oninput="this.dataset.manual='1';recalcOrderForm()">
+            <div id="o_sell_hint" style="font-size:11px;color:var(--teal);margin-top:3px;"></div>
           </div>
           <div class="form-group">
             <label>Est. Profit / Loss (XCG)</label>
@@ -617,6 +623,7 @@ async function launchApp(){
   setSyncStatus('syncing','Loading...');
   document.getElementById('s_date').value=new Date().toISOString().split('T')[0];
   await Promise.all([loadOrders(),loadSales(),loadSuppliers(),loadCustomers()]);
+  loadMarkup();
   setSyncStatus('synced','Synced');
 }
 
@@ -643,6 +650,15 @@ function switchTab(name,el){
 function fmtUSD(v){return(v==null||isNaN(v))?'&#8212;':'USD '+parseFloat(v).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');}
 function fmtXCG(v){return(v==null||isNaN(v))?'&#8212;':'XCG '+parseFloat(v).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');}
 function getRate(){return parseFloat(document.getElementById('exchangeRate').value)||1.82;}
+function getMarkup(){return parseFloat(document.getElementById('markupMultiplier').value)||2.5;}
+function saveMarkup(){
+  const cfg=JSON.parse(localStorage.getItem(CFG_KEY)||'{}');
+  cfg.markup=getMarkup();
+  localStorage.setItem(CFG_KEY,JSON.stringify(cfg));
+}
+function loadMarkup(){
+  try{const cfg=JSON.parse(localStorage.getItem(CFG_KEY)||'{}');if(cfg.markup)document.getElementById('markupMultiplier').value=cfg.markup;}catch(e){}
+}
 function getMonthLabel(dateStr){
   if(!dateStr)return'&#8212;';
   const d=new Date(dateStr+'T00:00:00');
@@ -888,6 +904,19 @@ function recalcOrderForm(){
   document.getElementById('o_total_usd').innerHTML=tU>0?fmtUSD(tU):'&#8212;';
   document.getElementById('o_total_xcg').innerHTML=tX>0?fmtXCG(tX):'&#8212;';
   document.getElementById('o_grand_xcg').innerHTML=(tX>0||cust>0)?fmtXCG(grand):'&#8212;';
+  // Auto-suggest sell price if not manually set
+  const markup=getMarkup();
+  const suggested=qty>0&&grand>0?grand/qty*markup:0;
+  const sellInput=document.getElementById('o_sell');
+  if((!sellInput.dataset.manual||sellInput.dataset.manual==='0')&&suggested>0){
+    sellInput.value=suggested.toFixed(2);
+    sell=suggested;
+    profit=(sell*qty)-grand;
+  }
+  // show suggested hint
+  const hint=document.getElementById('o_sell_hint');
+  if(hint&&suggested>0)hint.textContent='Suggested: '+fmtXCG(suggested);
+
   const pEl=document.getElementById('o_profit');
   if(sell>0&&qty>0&&tX>0){pEl.innerHTML=fmtXCG(profit);pEl.style.color=profit>=0?'var(--green)':'var(--red)';}
   else{pEl.innerHTML='&#8212;';pEl.style.color='';}
@@ -921,6 +950,8 @@ async function addOrder(){
 
 function clearOrderForm(){
   ['o_supplier','o_item','o_color','o_price','o_qty','o_customs','o_sell','o_notes'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('o_sell').dataset.manual='0';
+  const hint=document.getElementById('o_sell_hint');if(hint)hint.textContent='';
   ['o_total_usd','o_total_xcg','o_grand_xcg','o_profit'].forEach(id=>{document.getElementById(id).innerHTML='&#8212;';document.getElementById(id).style.color='';});
 }
 
@@ -941,7 +972,11 @@ function openEditOrder(id){
     <div class="form-group"><label>Item Price (USD)</label><input type="number" id="eo_price" value="${o.price||0}" step="0.01"></div>
     <div class="form-group"><label>Quantity</label><input type="number" id="eo_qty" value="${o.qty||0}" min="1"></div>
     <div class="form-group"><label>Customs (XCG)</label><input type="number" id="eo_customs" value="${o.customs||0}" step="0.01"></div>
-    <div class="form-group"><label>Sell Price/item (XCG)</label><input type="number" id="eo_sell" value="${o.sell_price||0}" step="0.01"></div>
+    <div class="form-group">
+      <label>Sell Price/item (XCG)</label>
+      <input type="number" id="eo_sell" value="${o.sell_price||0}" step="0.01">
+      <div style="font-size:11px;color:var(--teal);margin-top:3px;">Suggested: ${o.grand_xcg&&o.qty?fmtXCG(o.grand_xcg/o.qty*getMarkup()):''}</div>
+    </div>
     <div class="form-group" style="grid-column:span 2"><label>Notes</label><textarea id="eo_notes">${o.notes||''}</textarea></div>
   `;
   document.getElementById('edit-order-modal').classList.add('open');
