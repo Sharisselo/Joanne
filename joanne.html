@@ -879,6 +879,14 @@ function buildInventory(){
 // ============================================================
 let customers=[];
 
+async function loadSuppliers(){
+  try{
+    suppliers=await sbSelect('suppliers');
+    try{renderSuppliers();}catch(e){}
+    try{populateSupplierDropdown();}catch(e){}
+  }catch(e){console.error('loadSuppliers failed:',e);suppliers=[];}
+}
+
 async function loadCustomers(){
   try{
     customers=await sbSelect('customers');
