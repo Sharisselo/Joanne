@@ -793,6 +793,7 @@ function switchTab(name,el){
   if(name==='monthly')renderMonthly();
   if(name==='suppliers'){renderSuppliers();populateSupplierDropdown();}
   if(name==='customers'){renderCustomers();populateCustomerDropdown();}
+  if(name==='sales'){populateCustomerDropdown();populateSaleItemDropdown();updateInvNumberPreview();}
   if(name==='claims'){renderClaims();populateClaimOrderDropdown();}
 }
 
@@ -863,7 +864,28 @@ function buildInventory(){
 let customers=[];
 
 async function loadCustomers(){
-  try{customers=await sbSelect('customers');renderCustomers();populateCustomerDropdown();}
+  try{
+    customers=await sbSelect('customers');
+    renderCustomers();
+    populateCustomerDropdown();
+    // also repopulate when sales tab is active
+    const sel=document.getElementById('s_customer_select');
+    if(sel&&customers.length){
+      const cur=sel.value;
+      sel.innerHTML='<option value="">&#8212; Choose customer &#8212;</option>';
+      customers.forEach(c=>{
+        const opt=document.createElement('option');
+        opt.value=c.name;
+        opt.textContent=c.name+(c.instagram?' ('+c.instagram+')':'');
+        sel.appendChild(opt);
+      });
+      const other=document.createElement('option');
+      other.value='__other__';
+      other.textContent='+ Other (not in list)';
+      sel.appendChild(other);
+      if(cur)sel.value=cur;
+    }
+  }
   catch(e){console.log('Customer load error',e);}
 }
 
@@ -1453,7 +1475,14 @@ let editLineItems=[];
 
 async function loadSales(){
   try{
-    invoices=await sbFetch('/invoices?select=*,invoice_items(*)&order=created_at.asc');
+    // Load invoices and items separately to avoid join issues
+    const rawInvoices=await sbSelect('invoices');
+    const rawItems=await sbSelect('invoice_items');
+    // attach items to their invoices
+    invoices=rawInvoices.map(inv=>({
+      ...inv,
+      invoice_items:rawItems.filter(li=>li.invoice_id===inv.id)
+    }));
     renderSales();
   }catch(e){console.log('Invoice load error',e);}
 }
@@ -1728,7 +1757,10 @@ async function saveEditInvoice(){
   try{
     await sbUpdate('invoices',editingInvoiceId,{sale_date:date||null,customer,total,paid,balance,status,method,notes});
     // delete old items and re-insert
-    await sbFetch('/invoice_items?invoice_id=eq.'+editingInvoiceId,{method:'DELETE'});
+    await sbDelete('invoice_items?invoice_id=eq.'+editingInvoiceId+'&id=neq.00000000-0000-0000-0000-000000000000','');
+    // delete all items for this invoice
+    const existingItems=await sbFetch('/invoice_items?invoice_id=eq.'+editingInvoiceId);
+    for(const item of existingItems){await sbDelete('invoice_items',item.id);}
     for(const li of editLineItems){
       await sbInsert('invoice_items',{invoice_id:editingInvoiceId,item:li.item,item_color:li.item_color||'',order_ref:li.order_ref||'',qty:li.qty,unit_price:li.unit_price,subtotal:li.qty*li.unit_price});
     }
