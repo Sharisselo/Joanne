@@ -879,6 +879,45 @@ function buildInventory(){
 // ============================================================
 let customers=[];
 
+function populateSupplierDropdown(){
+  const sel=document.getElementById('o_supplier');
+  if(!sel)return;
+  const cur=sel.value;
+  sel.innerHTML='<option value="">&#8212; Choose supplier &#8212;</option>';
+  suppliers.forEach(s=>{
+    const opt=document.createElement('option');
+    opt.value=s.name;
+    opt.textContent=s.name+(s.country?' ('+s.country+')':'');
+    sel.appendChild(opt);
+  });
+  const other=document.createElement('option');
+  other.value='__other__';
+  other.textContent='+ Other (type manually)';
+  sel.appendChild(other);
+  if(cur)sel.value=cur;
+}
+
+function renderSuppliers(){
+  const tbody=document.getElementById('suppliers-body');
+  const empty=document.getElementById('suppliers-empty');
+  const count=document.getElementById('sup-count');
+  if(!tbody)return;
+  if(!suppliers.length){tbody.innerHTML='';if(empty)empty.style.display='block';if(count)count.textContent='';return;}
+  if(empty)empty.style.display='none';
+  if(count)count.textContent=suppliers.length+' suppliers';
+  tbody.innerHTML=suppliers.map(s=>`<tr>
+    <td style="font-weight:500;">${s.name}</td>
+    <td>${s.website?'<a href="https://'+s.website.replace(/^https?:\/\//,'')+'" target="_blank" style="color:var(--teal);">'+s.website+'</a>':'&#8212;'}</td>
+    <td>${s.contact||'&#8212;'}</td>
+    <td>${s.country||'&#8212;'}</td>
+    <td style="color:var(--text-light);font-size:12px;">${s.notes||''}</td>
+    <td style="white-space:nowrap;">
+      <button class="edit-btn" onclick="openEditSupplier('${s.id}')">&#9998;</button>
+      <button class="del-btn" onclick="deleteSupplier('${s.id}')">&#10005;</button>
+    </td>
+  </tr>`).join('');
+}
+
 async function loadSuppliers(){
   try{
     suppliers=await sbSelect('suppliers');
