@@ -770,12 +770,28 @@ async function launchApp(){
   document.getElementById('main-app').style.display='block';
   setSyncStatus('syncing','Loading...');
   if(document.getElementById('s_date'))document.getElementById('s_date').value=new Date().toISOString().split('T')[0];
-  // Load each independently so one failure doesn't block the rest
-  await Promise.allSettled([loadOrders(),loadSales(),loadSuppliers(),loadCustomers(),loadClaims()]);
+
+  // Load each table completely independently
+  const results = await Promise.allSettled([
+    loadOrders(),
+    loadSales(),
+    loadSuppliers(),
+    loadCustomers(),
+    loadClaims()
+  ]);
+
+  // Log any failures but don't block
+  results.forEach((r,i)=>{
+    if(r.status==='rejected'){
+      const names=['orders','sales','suppliers','customers','claims'];
+      console.error('Failed to load '+names[i]+':',r.reason);
+    }
+  });
+
   loadMarkup();
-  addLineItem();
-  updateInvNumberPreview();
-  setSyncStatus('synced','Synced');
+  try{addLineItem();}catch(e){}
+  try{updateInvNumberPreview();}catch(e){}
+  setSyncStatus('synced','Synced ✓');
 }
 
 if(loadConfig()){launchApp();}
@@ -866,27 +882,9 @@ let customers=[];
 async function loadCustomers(){
   try{
     customers=await sbSelect('customers');
-    renderCustomers();
-    populateCustomerDropdown();
-    // also repopulate when sales tab is active
-    const sel=document.getElementById('s_customer_select');
-    if(sel&&customers.length){
-      const cur=sel.value;
-      sel.innerHTML='<option value="">&#8212; Choose customer &#8212;</option>';
-      customers.forEach(c=>{
-        const opt=document.createElement('option');
-        opt.value=c.name;
-        opt.textContent=c.name+(c.instagram?' ('+c.instagram+')':'');
-        sel.appendChild(opt);
-      });
-      const other=document.createElement('option');
-      other.value='__other__';
-      other.textContent='+ Other (not in list)';
-      sel.appendChild(other);
-      if(cur)sel.value=cur;
-    }
-  }
-  catch(e){console.log('Customer load error',e);}
+    try{renderCustomers();}catch(e){}
+    try{populateCustomerDropdown();}catch(e){}
+  }catch(e){console.error('loadCustomers failed:',e);customers=[];}
 }
 
 function populateCustomerDropdown(){
@@ -1003,8 +1001,10 @@ let claimUnitCost=0;
 let claimOrderData=null;
 
 async function loadClaims(){
-  try{claims=await sbSelect('claims');renderClaims();}
-  catch(e){console.log('Claims load error',e);}
+  try{
+    claims=await sbSelect('claims');
+    try{renderClaims();}catch(e){}
+  }catch(e){console.error('loadClaims failed:',e);claims=[];}
 }
 
 function populateClaimOrderDropdown(){
@@ -1240,8 +1240,12 @@ let orders=[];
 let editingOrderId=null;
 
 async function loadOrders(){
-  try{orders=await sbSelect('orders');renderOrders();populateSaleItemDropdown();populateClaimOrderDropdown();}
-  catch(e){setSyncStatus('error','Sync error');}
+  try{
+    orders=await sbSelect('orders');
+    renderOrders();
+    try{populateSaleItemDropdown();}catch(e){}
+    try{populateClaimOrderDropdown();}catch(e){}
+  }catch(e){console.error('loadOrders failed:',e);}
 }
 
 function recalcOrderForm(){
@@ -1475,16 +1479,15 @@ let editLineItems=[];
 
 async function loadSales(){
   try{
-    // Load invoices and items separately to avoid join issues
     const rawInvoices=await sbSelect('invoices');
-    const rawItems=await sbSelect('invoice_items');
-    // attach items to their invoices
+    let rawItems=[];
+    try{rawItems=await sbSelect('invoice_items');}catch(e){console.log('invoice_items load error',e);}
     invoices=rawInvoices.map(inv=>({
       ...inv,
       invoice_items:rawItems.filter(li=>li.invoice_id===inv.id)
     }));
     renderSales();
-  }catch(e){console.log('Invoice load error',e);}
+  }catch(e){console.error('loadSales failed:',e);invoices=[];renderSales();}
 }
 
 function getNextInvoiceNumber(){
