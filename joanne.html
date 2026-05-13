@@ -1211,6 +1211,20 @@ function renderClaims(){
 }
 
 // ============================================================
+// SUPPLIER DELETE
+// ============================================================
+async function deleteSupplier(id){
+  if(!confirm('Delete this supplier?'))return;
+  setSyncStatus('syncing','Deleting...');
+  try{
+    await sbDelete('suppliers',id);
+    suppliers=suppliers.filter(s=>s.id!==id);
+    renderSuppliers();populateSupplierDropdown();
+    setSyncStatus('synced','Synced ✓');
+  }catch(e){setSyncStatus('error','Delete failed');}
+}
+
+// ============================================================
 // SUPPLIER EDIT
 // ============================================================
 let editingSupplierId=null;
@@ -1279,6 +1293,22 @@ async function saveEditCustomer(){
     closeModal('edit-customer-modal');setSyncStatus('synced','Synced');
   }catch(e){setSyncStatus('error','Save failed');alert('Could not save.');}
 }
+
+// ============================================================
+// SALE ITEM DROPDOWN (for inventory/claims - references orders)
+// ============================================================
+function populateSaleItemDropdown(){
+  // used by claims dropdown and any other place needing order items
+  try{populateClaimOrderDropdown();}catch(e){}
+}
+
+function onSaleItemSelect(){}
+function recalcSaleForm(){}
+function addSale(){}
+function clearSaleForm(){}
+function deleteSale(){}
+function openEditSale(){}
+function saveEditSale(){}
 
 // ============================================================
 // ORDERS
@@ -2003,7 +2033,7 @@ function renderInventory(){
 // ============================================================
 function renderMonthly(){
   const el=document.getElementById('monthly-content');
-  if(!sales.length&&!orders.length){el.innerHTML='<div class="empty"><div class="empty-icon">&#128197;</div><p>No data yet</p></div>';return;}
+  if(!invoices.length&&!orders.length){el.innerHTML='<div class="empty"><div class="empty-icon">&#128197;</div><p>No data yet</p></div>';return;}
 
   // collect all months
   const monthsSet=new Set();
