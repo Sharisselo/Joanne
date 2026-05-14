@@ -809,7 +809,12 @@ function switchTab(name,el){
   if(name==='monthly')renderMonthly();
   if(name==='suppliers'){renderSuppliers();populateSupplierDropdown();}
   if(name==='customers'){renderCustomers();populateCustomerDropdown();}
-  if(name==='sales'){populateCustomerDropdown();populateSaleItemDropdown();updateInvNumberPreview();}
+  if(name==='sales'){
+    // always refresh dropdowns with latest orders data
+    try{populateSaleItemDropdown();}catch(e){}
+    try{populateCustomerDropdown();}catch(e){}
+    try{updateInvNumberPreview();}catch(e){}
+  }
   if(name==='claims'){renderClaims();populateClaimOrderDropdown();}
 }
 
@@ -1320,8 +1325,12 @@ async function saveEditCustomer(){
 // SALE ITEM DROPDOWN (for inventory/claims - references orders)
 // ============================================================
 function populateSaleItemDropdown(){
-  // used by claims dropdown and any other place needing order items
+  // Refresh all line item selects in the invoice form
   try{populateClaimOrderDropdown();}catch(e){}
+  // Refresh line items if any exist
+  if(lineItems&&lineItems.length>0){
+    try{renderLineItems();}catch(e){}
+  }
 }
 
 function onSaleItemSelect(){}
@@ -1422,8 +1431,12 @@ async function addOrder(){
       }catch(imgErr){console.log('Image upload error',imgErr);}
     }
     orders.push(newOrder);
-    renderOrders();populateSaleItemDropdown();populateClaimOrderDropdown();clearOrderForm();
-    setSyncStatus('synced','Synced');
+    renderOrders();
+    try{populateSaleItemDropdown();}catch(e){}
+    try{populateClaimOrderDropdown();}catch(e){}
+    try{populateCustomerDropdown();}catch(e){}
+    clearOrderForm();
+    setSyncStatus('synced','Synced ✓');
   }catch(e){setSyncStatus('error','Save failed');alert('Could not save.');}
 }
 
