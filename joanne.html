@@ -918,6 +918,28 @@ function renderSuppliers(){
   </tr>`).join('');
 }
 
+async function addSupplier(){
+  const name=document.getElementById('sup_name').value.trim();
+  const website=document.getElementById('sup_website').value.trim();
+  const contact=document.getElementById('sup_contact').value.trim();
+  const country=document.getElementById('sup_country').value.trim();
+  const notes=document.getElementById('sup_notes').value.trim();
+  if(!name){alert('Please enter a supplier name.');return;}
+  setSyncStatus('syncing','Saving...');
+  try{
+    const res=await sbInsert('suppliers',{name,website,contact,country,notes});
+    suppliers.push(res[0]);
+    renderSuppliers();populateSupplierDropdown();clearSupplierForm();
+    setSyncStatus('synced','Synced ✓');
+  }catch(e){setSyncStatus('error','Save failed');alert('Could not save: '+e.message);}
+}
+
+function clearSupplierForm(){
+  ['sup_name','sup_website','sup_contact','sup_country','sup_notes'].forEach(id=>{
+    const el=document.getElementById(id);if(el)el.value='';
+  });
+}
+
 async function loadSuppliers(){
   try{
     suppliers=await sbSelect('suppliers');
