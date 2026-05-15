@@ -677,9 +677,16 @@ tbody tr:last-child td{border-bottom:none;}
     <!-- INVENTORY TAB -->
     <div id="tab-inventory" class="tab-panel">
       <div class="card">
-        <div class="card-header">
+        <div class="card-header" style="flex-wrap:wrap;gap:12px;">
           <span class="card-title">Inventory</span>
-          <span style="font-size:12px;color:var(--text-light);">Auto-generated from orders &amp; sales</span>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--text-light);">Filter:</span>
+            <span onclick="setInvFilter('all')" id="inv-filter-all" style="cursor:pointer;font-size:11px;padding:3px 12px;border-radius:20px;font-family:'Jost',sans-serif;border:1px solid #33412F;background:#33412F;color:white;font-weight:600;">All</span>
+            <span onclick="setInvFilter('in')" id="inv-filter-in" style="cursor:pointer;font-size:11px;padding:3px 12px;border-radius:20px;font-family:'Jost',sans-serif;border:1px solid var(--border);color:var(--text-light);">In Stock</span>
+            <span onclick="setInvFilter('low')" id="inv-filter-low" style="cursor:pointer;font-size:11px;padding:3px 12px;border-radius:20px;font-family:'Jost',sans-serif;border:1px solid var(--border);color:var(--text-light);">Low Stock</span>
+            <span onclick="setInvFilter('out')" id="inv-filter-out" style="cursor:pointer;font-size:11px;padding:3px 12px;border-radius:20px;font-family:'Jost',sans-serif;border:1px solid var(--border);color:var(--text-light);">Out of Stock</span>
+          </div>
+          <span style="font-size:12px;color:var(--text-light);" id="inv-count"></span>
         </div>
         <div id="inv-content"></div>
       </div>
@@ -688,7 +695,13 @@ tbody tr:last-child td{border-bottom:none;}
     <!-- MONTHLY TAB -->
     <div id="tab-monthly" class="tab-panel">
       <div class="card">
-        <div class="card-header"><span class="card-title">Monthly Summary</span></div>
+        <div class="card-header">
+          <span class="card-title">Monthly Summary</span>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <span style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--text-light);">Exclude suppliers:</span>
+            <div id="supplier-filter-tags" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+          </div>
+        </div>
         <div id="monthly-content"></div>
       </div>
     </div>
@@ -813,7 +826,7 @@ function switchTab(name,el){
   el.classList.add('active');
   if(name==='overview')renderOverview();
   if(name==='inventory')renderInventory();
-  if(name==='monthly')renderMonthly();
+  if(name==='monthly'){renderMonthly();renderSupplierFilterTags();}
   if(name==='suppliers'){renderSuppliers();populateSupplierDropdown();}
   if(name==='customers'){renderCustomers();populateCustomerDropdown();}
   if(name==='sales'){
@@ -2042,12 +2055,57 @@ function generateInvoicePDF(id){
 // ============================================================
 // INVENTORY
 // ============================================================
+let currentInvFilter = 'all';
+
+function setInvFilter(filter){
+  currentInvFilter = filter;
+  // Update button styles
+  const filters = ['all','in','low','out'];
+  const labels = {all:'All', in:'In Stock', low:'Low Stock', out:'Out of Stock'};
+  const colors = {all:'#33412F', in:'#2E7D4F', low:'#D4721A', out:'#C0392B'};
+  filters.forEach(f => {
+    const el = document.getElementById('inv-filter-'+f);
+    if(!el) return;
+    if(f === filter){
+      el.style.background = colors[f];
+      el.style.borderColor = colors[f];
+      el.style.color = 'white';
+      el.style.fontWeight = '600';
+    } else {
+      el.style.background = 'transparent';
+      el.style.borderColor = 'var(--border)';
+      el.style.color = 'var(--text-light)';
+      el.style.fontWeight = '400';
+    }
+  });
+  renderInventory();
+}
+
 function renderInventory(){
   const {stock,meta}=buildInventory();
-  const keys=Object.keys(meta);
+  const allKeys=Object.keys(meta);
   const el=document.getElementById('inv-content');
-  if(!keys.length){el.innerHTML='<div class="empty"><div class="empty-icon">&#128202;</div><p>Add orders to see inventory</p></div>';return;}
+  const countEl=document.getElementById('inv-count');
+  if(!allKeys.length){el.innerHTML='<div class="empty"><div class="empty-icon">&#128202;</div><p>Add orders to see inventory</p></div>';return;}
   const curMonth=getCurrentMonth();
+
+  // Apply filter
+  const keys=allKeys.filter(k=>{
+    const qty=stock[k]||0;
+    if(currentInvFilter==='all') return true;
+    if(currentInvFilter==='out') return qty<=0;
+    if(currentInvFilter==='low') return qty>0&&qty<=3;
+    if(currentInvFilter==='in') return qty>3;
+    return true;
+  });
+
+  if(!keys.length){
+    el.innerHTML='<div class="empty"><div class="empty-icon">&#128202;</div><p>No items match this filter</p></div>';
+    if(countEl)countEl.textContent='0 items';
+    return;
+  }
+  if(countEl)countEl.textContent=keys.length+' item'+(keys.length!==1?'s':'');
+
   el.innerHTML=`<div class="inv-grid">${keys.map(k=>{
     const m=meta[k];
     const qty=stock[k]||0;
@@ -2073,19 +2131,59 @@ function renderInventory(){
 // ============================================================
 // MONTHLY SUMMARY
 // ============================================================
+// Track excluded suppliers for monthly view
+let excludedSuppliers = new Set();
+
+function renderSupplierFilterTags(){
+  const container = document.getElementById('supplier-filter-tags');
+  if(!container) return;
+  // Get all unique suppliers from orders
+  const allSuppliers = [...new Set(orders.map(o=>o.supplier).filter(Boolean))];
+  container.innerHTML = allSuppliers.map(sup => {
+    const isExcluded = excludedSuppliers.has(sup);
+    return `<span onclick="toggleSupplierFilter('${sup}')" style="
+      cursor:pointer;
+      font-size:11px;
+      padding:3px 10px;
+      border-radius:20px;
+      font-family:'Jost',sans-serif;
+      letter-spacing:0.5px;
+      border:1px solid ${isExcluded ? '#FBA0A3' : 'var(--border)'};
+      background:${isExcluded ? '#FBA0A3' : 'transparent'};
+      color:${isExcluded ? '#33412F' : 'var(--text-light)'};
+      font-weight:${isExcluded ? '600' : '400'};
+      transition:all 0.2s;
+    ">${isExcluded ? '✕ ' : ''}${sup}</span>`;
+  }).join('');
+}
+
+function toggleSupplierFilter(supplier){
+  if(excludedSuppliers.has(supplier)){
+    excludedSuppliers.delete(supplier);
+  } else {
+    excludedSuppliers.add(supplier);
+  }
+  renderSupplierFilterTags();
+  renderMonthly();
+}
+
 function renderMonthly(){
   const el=document.getElementById('monthly-content');
+  renderSupplierFilterTags();
   if(!invoices.length&&!orders.length){el.innerHTML='<div class="empty"><div class="empty-icon">&#128197;</div><p>No data yet</p></div>';return;}
+
+  // Filter orders by excluded suppliers
+  const filteredOrders = orders.filter(o => !excludedSuppliers.has(o.supplier));
 
   // collect all months
   const monthsSet=new Set();
-  orders.forEach(o=>monthsSet.add(getEntryMonth(o.created_at)));
+  filteredOrders.forEach(o=>monthsSet.add(getEntryMonth(o.created_at)));
   invoices.forEach(s=>{if(s.sale_date)monthsSet.add(s.sale_date.substring(0,7));});
   const months=[...monthsSet].sort().reverse();
 
   el.innerHTML=`<div class="month-grid">${months.map(ym=>{
     const label=monthLabel(ym);
-    const mOrders=orders.filter(o=>getEntryMonth(o.created_at)===ym);
+    const mOrders=filteredOrders.filter(o=>getEntryMonth(o.created_at)===ym);
     const mSales=invoices.filter(s=>s.sale_date&&s.sale_date.substring(0,7)===ym);
     const totalSpent=mOrders.reduce((s,o)=>s+(o.grand_xcg||0),0);
     const totalRevenue=mSales.reduce((s,o)=>s+(o.total||0),0);
