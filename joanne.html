@@ -1892,10 +1892,13 @@ async function saveEditInvoice(){
   try{
     await sbUpdate('invoices',editingInvoiceId,{sale_date:date||null,customer,total,paid,balance,status,method,notes});
     // delete old items and re-insert
-    await sbDelete('invoice_items?invoice_id=eq.'+editingInvoiceId+'&id=neq.00000000-0000-0000-0000-000000000000','');
-    // delete all items for this invoice
-    const existingItems=await sbFetch('/invoice_items?invoice_id=eq.'+editingInvoiceId);
-    for(const item of existingItems){await sbDelete('invoice_items',item.id);}
+    // delete all existing items for this invoice one by one
+    try{
+      const existingItems=await sbFetch('/invoice_items?invoice_id=eq.'+editingInvoiceId);
+      for(const item of existingItems){
+        await sbFetch('/invoice_items?id=eq.'+item.id,{method:'DELETE'});
+      }
+    }catch(e){console.log('Delete items error:',e);}
     for(const li of editLineItems){
       await sbInsert('invoice_items',{invoice_id:editingInvoiceId,item:li.item,item_color:li.item_color||'',order_ref:li.order_ref||'',qty:li.qty,unit_price:li.unit_price,subtotal:li.qty*li.unit_price});
     }
