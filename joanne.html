@@ -1948,20 +1948,24 @@ function renderEditLineItems(){
   const container=document.getElementById('edit-line-items-container');
   if(!container)return;
   const {stock}=buildInventory();
-  container.innerHTML=editLineItems.map((li,idx)=>{
+  container.innerHTML=editLineItems.map(function(li,idx){
     let opts='<option value="">&#8212; Choose item &#8212;</option>';
-    orders.forEach(o=>{
+    orders.forEach(function(o){
       const ref=o.order_ref||o.id;
       const q=stock[ref]||0;
-      const label=(o.order_ref?o.order_ref+' · ':'')+o.item+(o.color?' ('+o.color+')':'');
-      const sel=(li.order_ref===ref||li.item===o.item)?'selected':'';
+      const label=(o.order_ref?o.order_ref+' - ':'')+o.item+(o.color?' ('+o.color+')':'');
+      // Match by order_ref first, then by item+color
+      const isMatch=(li.order_ref&&li.order_ref===ref)||
+                    (!li.order_ref&&o.item===li.item&&(o.color||'')===(li.item_color||''));
+      const sel=isMatch?'selected':'';
       opts+='<option value="'+ref+'" data-item="'+o.item+'" data-color="'+(o.color||'')+'" data-price="'+(o.sell_price||0)+'" data-ref="'+ref+'" '+sel+'>'+label+'</option>';
     });
+    const subtotal=((li.qty||1)*(li.unit_price||0)).toFixed(2);
     return'<div style="display:grid;grid-template-columns:2fr 80px 120px 100px 32px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--beige-mid);">'
-      +'<select onchange="onEditLineItemSelect('+idx+',this)" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:Jost,sans-serif;font-size:12px;background:var(--beige);outline:none;">'+opts+'</select>'
-      +'<input type="number" id="eli-qty-'+idx+'" value="'+(li.qty||1)+'" min="1" onchange="recalcEditInvoice()" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:Jost,sans-serif;font-size:12px;background:var(--beige);outline:none;text-align:center;">'
-      +'<input type="number" id="eli-price-'+idx+'" value="'+(li.unit_price||0)+'" step="0.01" onchange="recalcEditInvoice()" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:Jost,sans-serif;font-size:12px;background:var(--beige);outline:none;">'
-      +'<div id="eli-sub-'+idx+'" style="font-size:12px;font-weight:500;color:#33412F;text-align:right;">'+(li.qty||1)*(li.unit_price||0)>0?'XCG '+((li.qty||1)*(li.unit_price||0)).toFixed(2):'XCG 0.00'+'</div>'
+      +'<select onchange="onEditLineItemSelect('+idx+',this)" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;background:var(--beige);outline:none;">'+opts+'</select>'
+      +'<input type="number" id="eli-qty-'+idx+'" value="'+(li.qty||1)+'" min="1" onchange="recalcEditInvoice()" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;background:var(--beige);outline:none;text-align:center;">'
+      +'<input type="number" id="eli-price-'+idx+'" value="'+(li.unit_price||0)+'" step="0.01" onchange="recalcEditInvoice()" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;background:var(--beige);outline:none;">'
+      +'<div id="eli-sub-'+idx+'" style="font-size:12px;font-weight:500;color:#33412F;text-align:right;">XCG '+subtotal+'</div>'
       +'<button onclick="removeEditLineItem('+idx+')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:16px;">&#10005;</button>'
       +'</div>';
   }).join('');
