@@ -902,28 +902,61 @@ function closeModal(id){document.getElementById(id).classList.remove('open');}
 // ============================================================
 function invKey(item,color){return(item+'||'+(color||'')).toLowerCase();}
 
+// buildInventory moved below
+
+// ============================================================
+// INVENTORY KEY FUNCTIONS
+// ============================================================
+function invKey(item,color){return(item+'||'+(color||'')).toLowerCase();}
+
+function invKeyFull(item,color,supplier){
+  return(item+'||'+(color||'')+'||'+(supplier||'')).toLowerCase();
+}
+
 function buildInventory(){
-  // stock = orders qty - sales qty per item+color
   const stock={};
   const meta={};
+  const orderRefs={};
+
   orders.forEach(o=>{
-    const k=invKey(o.item,o.color);
+    const k=invKeyFull(o.item,o.color,o.supplier);
     stock[k]=(stock[k]||0)+o.qty;
-    meta[k]={item:o.item,color:o.color||'',sell_price:o.sell_price,supplier:o.supplier,month:getEntryMonth(o.created_at),order_ref:o.order_ref||'',image_url:o.image_url||''};
+    if(!orderRefs[k])orderRefs[k]=[];
+    orderRefs[k].push({ref:o.order_ref||'?',qty:o.qty,image_url:o.image_url||''});
+    meta[k]={
+      item:o.item,
+      color:o.color||'',
+      sell_price:o.sell_price,
+      supplier:o.supplier||'',
+      month:getEntryMonth(o.created_at),
+      order_ref:o.order_ref||'',
+      image_url:o.image_url||''
+    };
   });
-  // deduct sold items from invoice line items
+
+  // Deduct sales
   invoices.forEach(inv=>{
     (inv.invoice_items||[]).forEach(li=>{
-      const k=invKey(li.item,li.item_color);
-      stock[k]=(stock[k]||0)-li.qty;
+      const matchKey=Object.keys(stock).find(k=>{
+        const parts=k.split('||');
+        return parts[0]===(li.item||'').toLowerCase()&&
+               parts[1]===(li.item_color||'').toLowerCase();
+      });
+      if(matchKey)stock[matchKey]=(stock[matchKey]||0)-li.qty;
     });
   });
-  // also deduct claimed/missing items from stock
+
+  // Deduct claims
   claims.forEach(c=>{
-    const k=invKey(c.item,c.item_color);
-    if(stock[k]!==undefined)stock[k]=(stock[k]||0)-c.qty_affected;
+    const matchKey=Object.keys(stock).find(k=>{
+      const parts=k.split('||');
+      return parts[0]===(c.item||'').toLowerCase()&&
+             parts[1]===(c.item_color||'').toLowerCase();
+    });
+    if(matchKey)stock[matchKey]=(stock[matchKey]||0)-c.qty_affected;
   });
-  return{stock,meta};
+
+  return{stock,meta,orderRefs};
 }
 
 // ============================================================
