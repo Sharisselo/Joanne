@@ -953,18 +953,24 @@ function buildInventory(){
     nameToRefs[nk].push(ref);
   });
 
-  // Deduct sales from oldest order first
+  // Deduct sales - use order_ref directly if available, else match by name+color
   invoices.forEach(inv=>{
     (inv.invoice_items||[]).forEach(li=>{
-      const nk=((li.item||'')+'||'+(li.item_color||'')).toLowerCase();
-      const refs=nameToRefs[nk]||[];
-      let remaining=li.qty||0;
-      for(const ref of refs){
-        if(remaining<=0)break;
-        const avail=stock[ref]||0;
-        const deduct=Math.min(avail,remaining);
-        stock[ref]-=deduct;
-        remaining-=deduct;
+      if(li.order_ref&&stock[li.order_ref]!==undefined){
+        // Direct deduction by order ref - most accurate
+        stock[li.order_ref]=(stock[li.order_ref]||0)-(li.qty||0);
+      } else {
+        // Fallback: match by name+color, deduct from oldest first
+        const nk=((li.item||'')+'||'+(li.item_color||'')).toLowerCase();
+        const refs=nameToRefs[nk]||[];
+        let remaining=li.qty||0;
+        for(const ref of refs){
+          if(remaining<=0)break;
+          const avail=stock[ref]||0;
+          const deduct=Math.min(avail,remaining);
+          stock[ref]-=deduct;
+          remaining-=deduct;
+        }
       }
     });
   });
