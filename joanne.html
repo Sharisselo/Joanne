@@ -925,50 +925,67 @@ function invKeyFull(item,color,supplier){
 }
 
 function buildInventory(){
+  // Each order ref = its own inventory slot
   const stock={};
   const meta={};
-  const orderRefs={};
 
   orders.forEach(o=>{
-    const k=invKeyFull(o.item,o.color,o.supplier);
-    stock[k]=(stock[k]||0)+o.qty;
-    if(!orderRefs[k])orderRefs[k]=[];
-    orderRefs[k].push({ref:o.order_ref||'?',qty:o.qty,image_url:o.image_url||''});
-    meta[k]={
+    const ref=o.order_ref||o.id;
+    stock[ref]=(stock[ref]||0)+(o.qty||0);
+    meta[ref]={
       item:o.item,
       color:o.color||'',
-      sell_price:o.sell_price,
+      sell_price:o.sell_price||0,
       supplier:o.supplier||'',
       month:getEntryMonth(o.created_at),
-      order_ref:o.order_ref||'',
+      order_ref:ref,
+      id:o.id,
       image_url:o.image_url||''
     };
   });
 
-  // Deduct sales
+  // Track name+color -> refs for sales deduction
+  const nameToRefs={};
+  orders.forEach(o=>{
+    const ref=o.order_ref||o.id;
+    const nk=(o.item+'||'+(o.color||'')).toLowerCase();
+    if(!nameToRefs[nk])nameToRefs[nk]=[];
+    nameToRefs[nk].push(ref);
+  });
+
+  // Deduct sales from oldest order first
   invoices.forEach(inv=>{
     (inv.invoice_items||[]).forEach(li=>{
-      const matchKey=Object.keys(stock).find(k=>{
-        const parts=k.split('||');
-        return parts[0]===(li.item||'').toLowerCase()&&
-               parts[1]===(li.item_color||'').toLowerCase();
-      });
-      if(matchKey)stock[matchKey]=(stock[matchKey]||0)-li.qty;
+      const nk=((li.item||'')+'||'+(li.item_color||'')).toLowerCase();
+      const refs=nameToRefs[nk]||[];
+      let remaining=li.qty||0;
+      for(const ref of refs){
+        if(remaining<=0)break;
+        const avail=stock[ref]||0;
+        const deduct=Math.min(avail,remaining);
+        stock[ref]-=deduct;
+        remaining-=deduct;
+      }
     });
   });
 
   // Deduct claims
   claims.forEach(c=>{
-    const matchKey=Object.keys(stock).find(k=>{
-      const parts=k.split('||');
-      return parts[0]===(c.item||'').toLowerCase()&&
-             parts[1]===(c.item_color||'').toLowerCase();
-    });
-    if(matchKey)stock[matchKey]=(stock[matchKey]||0)-c.qty_affected;
+    const nk=((c.item||'')+'||'+(c.item_color||'')).toLowerCase();
+    const refs=nameToRefs[nk]||[];
+    let remaining=c.qty_affected||0;
+    for(const ref of refs){
+      if(remaining<=0)break;
+      const avail=stock[ref]||0;
+      const deduct=Math.min(avail,remaining);
+      stock[ref]-=deduct;
+      remaining-=deduct;
+    }
   });
 
-  return{stock,meta,orderRefs};
+  return{stock,meta,orderRefs:{}};
 }
+
 
 // ============================================================
 // CUSTOMERS
@@ -1317,7 +1334,7 @@ function renderClaims(){
     <td>${c.qty_affected}</td>
     <td style="color:var(--red);font-weight:600;">${fmtXCG(c.refund_amount)}</td>
     <td>
-      <select onchange="updateClaimStatus('${c.id}',this.value)" style="border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-family:'Jost',sans-serif;font-size:12px;color:${statusColors[c.status]||'inherit'};background:var(--beige);outline:none;cursor:pointer;">
+      <select onchange="updateClaimStatus('${c.id}',this.value)" style="border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-family:Jost,sans-serif;font-size:12px;color:${statusColors[c.status]||'inherit'};background:var(--beige);outline:none;cursor:pointer;">
         <option ${c.status==='Pending'?'selected':''}>Pending</option>
         <option ${c.status==='Refunded'?'selected':''}>Refunded</option>
         <option ${c.status==='Resolved'?'selected':''}>Resolved</option>
@@ -1630,7 +1647,7 @@ function openEditOrder(id){
     <div class="form-group" style="grid-column:span 2">
       <label>Item Photo</label>
       ${o.image_url?`<div style="margin-bottom:8px;"><img src="${o.image_url}" style="height:80px;border-radius:8px;border:1px solid var(--border);object-fit:cover;"></div>`:''}
-      <input type="file" id="eo_image" accept="image/*" style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-family:'Jost',sans-serif;font-size:13px;background:var(--beige);width:100%;cursor:pointer;">
+      <input type="file" id="eo_image" accept="image/*" style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-family:Jost,sans-serif;font-size:13px;background:var(--beige);width:100%;cursor:pointer;">
       <div style="font-size:11px;color:var(--text-light);margin-top:4px;">${o.image_url?'Upload a new photo to replace the current one':'No photo yet — upload one now'}</div>
     </div>
   `;
@@ -1754,23 +1771,21 @@ function updateInvNumberPreview(){
 function createLineItemRow(idx, item='', color='', orderRef='', qty=1, price=0){
   const {stock}=buildInventory();
   let opts='<option value="">&#8212; Choose item &#8212;</option>';
-  const seen=new Set();
   orders.forEach(o=>{
-    const k=invKey(o.item,o.color);
-    if(seen.has(k))return;seen.add(k);
-    const q=stock[k]||0;
+    const ref=o.order_ref||o.id;
+    const q=stock[ref]||0;
     const oos=q<=0;
-    const label=(o.order_ref?o.order_ref+' · ':'')+o.item+(o.color?' ('+o.color+')':'')+(oos?' — OUT OF STOCK':' — '+q+' in stock');
-    const sel=(invKey(item,color)===k)?'selected':'';
-    opts+=`<option value="${k}" data-item="${o.item}" data-color="${o.color||''}" data-price="${o.sell_price||0}" data-ref="${o.order_ref||''}" ${sel}>${label}</option>`;
+    const label=(o.order_ref?o.order_ref+' · ':'')+o.item+(o.color?' ('+o.color+')':'')+( oos?' — OUT OF STOCK':' — '+q+' in stock');
+    const sel=(orderRef===ref)?'selected':'';
+    opts+='<option value="'+ref+'" data-item="'+o.item+'" data-color="'+(o.color||'')+'" data-price="'+(o.sell_price||0)+'" data-ref="'+ref+'" '+sel+'>'+label+'</option>';
   });
-  return`<div class="line-item-row" id="li-${idx}" style="display:grid;grid-template-columns:2fr 80px 120px 100px 32px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--beige-mid);">
-    <select onchange="onLineItemSelect(${idx},this)" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:'Jost',sans-serif;font-size:12px;background:var(--beige);outline:none;">${opts}</select>
-    <input type="number" id="li-qty-${idx}" value="${qty}" min="1" placeholder="Qty" onchange="recalcInvoice()" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:'Jost',sans-serif;font-size:12px;background:var(--beige);outline:none;text-align:center;">
-    <input type="number" id="li-price-${idx}" value="${price||''}" placeholder="Price" step="0.01" onchange="recalcInvoice()" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:'Jost',sans-serif;font-size:12px;background:var(--beige);outline:none;">
-    <div id="li-sub-${idx}" style="font-size:12px;font-weight:500;color:var(--teal);text-align:right;padding-right:4px;">XCG 0.00</div>
-    <button onclick="removeLineItem(${idx})" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:16px;" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='#ccc'">&#10005;</button>
-  </div>`;
+  return'<div class="line-item-row" id="li-'+idx+'" style="display:grid;grid-template-columns:2fr 80px 120px 100px 32px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--beige-mid);">'
+    +'<select onchange="onLineItemSelect('+idx+',this)" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:Jost,sans-serif;font-size:12px;background:var(--beige);outline:none;">'+opts+'</select>'
+    +'<input type="number" id="li-qty-'+idx+'" value="'+qty+'" min="1" placeholder="Qty" onchange="recalcInvoice()" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:Jost,sans-serif;font-size:12px;background:var(--beige);outline:none;text-align:center;">'
+    +'<input type="number" id="li-price-'+idx+'" value="'+(price||'')+'" placeholder="Price" step="0.01" onchange="recalcInvoice()" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:Jost,sans-serif;font-size:12px;background:var(--beige);outline:none;">'
+    +'<div id="li-sub-'+idx+'" style="font-size:12px;font-weight:500;color:#33412F;text-align:right;padding-right:4px;">XCG 0.00</div>'
+    +'<button onclick="removeLineItem('+idx+')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:16px;">&#10005;</button>'
+    +'</div>';
 }
 
 function addLineItem(){
@@ -1935,22 +1950,20 @@ function renderEditLineItems(){
   const {stock}=buildInventory();
   container.innerHTML=editLineItems.map((li,idx)=>{
     let opts='<option value="">&#8212; Choose item &#8212;</option>';
-    const seen=new Set();
     orders.forEach(o=>{
-      const k=invKey(o.item,o.color);
-      if(seen.has(k))return;seen.add(k);
-      const q=stock[k]||0;
+      const ref=o.order_ref||o.id;
+      const q=stock[ref]||0;
       const label=(o.order_ref?o.order_ref+' · ':'')+o.item+(o.color?' ('+o.color+')':'');
-      const sel=invKey(li.item,li.item_color)===k?'selected':'';
-      opts+=`<option value="${k}" data-item="${o.item}" data-color="${o.color||''}" data-price="${o.sell_price||0}" data-ref="${o.order_ref||''}" ${sel}>${label}</option>`;
+      const sel=(li.order_ref===ref||li.item===o.item)?'selected':'';
+      opts+='<option value="'+ref+'" data-item="'+o.item+'" data-color="'+(o.color||'')+'" data-price="'+(o.sell_price||0)+'" data-ref="'+ref+'" '+sel+'>'+label+'</option>';
     });
-    return`<div style="display:grid;grid-template-columns:2fr 80px 120px 100px 32px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--beige-mid);">
-      <select onchange="onEditLineItemSelect(${idx},this)" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:'Jost',sans-serif;font-size:12px;background:var(--beige);outline:none;">${opts}</select>
-      <input type="number" id="eli-qty-${idx}" value="${li.qty||1}" min="1" onchange="recalcEditInvoice()" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:'Jost',sans-serif;font-size:12px;background:var(--beige);outline:none;text-align:center;">
-      <input type="number" id="eli-price-${idx}" value="${li.unit_price||0}" step="0.01" onchange="recalcEditInvoice()" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:'Jost',sans-serif;font-size:12px;background:var(--beige);outline:none;">
-      <div id="eli-sub-${idx}" style="font-size:12px;font-weight:500;color:var(--teal);text-align:right;">${fmtXCG((li.qty||1)*(li.unit_price||0))}</div>
-      <button onclick="removeEditLineItem(${idx})" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:16px;" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='#ccc'">&#10005;</button>
-    </div>`;
+    return'<div style="display:grid;grid-template-columns:2fr 80px 120px 100px 32px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--beige-mid);">'
+      +'<select onchange="onEditLineItemSelect('+idx+',this)" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:Jost,sans-serif;font-size:12px;background:var(--beige);outline:none;">'+opts+'</select>'
+      +'<input type="number" id="eli-qty-'+idx+'" value="'+(li.qty||1)+'" min="1" onchange="recalcEditInvoice()" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:Jost,sans-serif;font-size:12px;background:var(--beige);outline:none;text-align:center;">'
+      +'<input type="number" id="eli-price-'+idx+'" value="'+(li.unit_price||0)+'" step="0.01" onchange="recalcEditInvoice()" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:Jost,sans-serif;font-size:12px;background:var(--beige);outline:none;">'
+      +'<div id="eli-sub-'+idx+'" style="font-size:12px;font-weight:500;color:#33412F;text-align:right;">'+(li.qty||1)*(li.unit_price||0)>0?'XCG '+((li.qty||1)*(li.unit_price||0)).toFixed(2):'XCG 0.00'+'</div>'
+      +'<button onclick="removeEditLineItem('+idx+')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:16px;">&#10005;</button>'
+      +'</div>';
   }).join('');
   recalcEditInvoice();
 }
@@ -2051,7 +2064,7 @@ function renderSales(){
       <td style="color:var(--text-light);font-size:12px;">${inv.notes||''}</td>
       <td style="white-space:nowrap;">
         <button class="edit-btn" onclick="openEditInvoice('${inv.id}')" title="Edit">&#9998;</button>
-        <button onclick="generateInvoicePDF('${inv.id}')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:14px;padding:2px 5px;border-radius:4px;transition:color .2s;" onmouseover="this.style.color='var(--teal)'" onmouseout="this.style.color='#ccc'" title="Download Invoice">&#128196;</button>
+        <button onclick="generateInvoicePDF('${inv.id}')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:14px;padding:2px 5px;border-radius:4px;transition:color .2s;" title="Download Invoice">&#128196;</button>
         <button class="del-btn" onclick="deleteInvoice('${inv.id}')" title="Delete">&#10005;</button>
       </td>
     </tr>`;
@@ -2226,10 +2239,10 @@ function renderInventory(){
   }
   if(countEl)countEl.textContent=keys.length+' item'+(keys.length!==1?'s':'');
 
-  // Sort keys by order_ref
+  // Sort keys by JO number
   keys.sort((a,b)=>{
-    const na=parseInt((a||'').replace('JO-',''))||0;
-    const nb=parseInt((b||'').replace('JO-',''))||0;
+    const na=parseInt((a||'0').replace(/[^0-9]/g,''))||0;
+    const nb=parseInt((b||'0').replace(/[^0-9]/g,''))||0;
     return na-nb;
   });
 
@@ -2287,7 +2300,7 @@ function renderSupplierFilterTags(){
       font-size:11px;
       padding:3px 10px;
       border-radius:20px;
-      font-family:'Jost',sans-serif;
+      font-family:Jost,sans-serif;
       letter-spacing:0.5px;
       border:1px solid ${isExcluded ? '#FBA0A3' : 'var(--border)'};
       background:${isExcluded ? '#FBA0A3' : 'transparent'};
