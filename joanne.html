@@ -182,6 +182,32 @@ tbody tr:last-child td{border-bottom:none;}
   </div>
 </div>
 
+<!-- COPY ORDER MODAL -->
+<div class="modal-overlay" id="copy-order-modal">
+  <div class="modal" style="max-width:500px;">
+    <div class="modal-header">
+      <span class="modal-title">Copy from Existing Order</span>
+      <button class="modal-close" onclick="closeModal('copy-order-modal')">&times;</button>
+    </div>
+    <div style="padding:20px;">
+      <div class="form-group">
+        <label>Select item to copy</label>
+        <select id="copy-order-select" style="border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-family:'Jost',sans-serif;font-size:13px;background:var(--beige);outline:none;width:100%;">
+          <option value="">&#8212; Choose item &#8212;</option>
+        </select>
+      </div>
+      <div style="font-size:12px;color:var(--text-light);margin-top:8px;line-height:1.6;">
+        This will pre-fill the order form with the selected item's details.<br>
+        You can then update the quantity, price and any other details before saving.
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('copy-order-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="copyOrderToForm()">Copy to Form</button>
+    </div>
+  </div>
+</div>
+
 <!-- EDIT ORDER MODAL -->
 <div class="modal-overlay" id="edit-order-modal">
   <div class="modal">
@@ -554,6 +580,7 @@ tbody tr:last-child td{border-bottom:none;}
         <div class="form-actions">
           <button class="btn btn-primary" onclick="addOrder()">+ Add Order</button>
           <button class="btn btn-secondary" onclick="clearOrderForm()">Clear</button>
+          <button class="btn btn-secondary" onclick="openCopyOrder()" style="border-color:#FBA0A3;color:#FBA0A3;">&#128203; Copy Existing Item</button>
         </div>
       </div>
       <div class="card">
@@ -1362,6 +1389,53 @@ function openEditSale(){}
 function saveEditSale(){}
 
 // ============================================================
+// COPY ORDER
+// ============================================================
+function openCopyOrder(){
+  const sel=document.getElementById('copy-order-select');
+  sel.innerHTML='<option value="">&#8212; Choose item &#8212;</option>';
+  // Group unique items by name+color+supplier
+  const seen=new Set();
+  orders.forEach(o=>{
+    const k=invKeyFull(o.item,o.color,o.supplier);
+    if(seen.has(k))return;seen.add(k);
+    const opt=document.createElement('option');
+    opt.value=o.id;
+    opt.textContent=o.item+(o.color?' ('+o.color+')':'')+(o.supplier?' · '+o.supplier:'');
+    sel.appendChild(opt);
+  });
+  document.getElementById('copy-order-modal').classList.add('open');
+}
+
+function copyOrderToForm(){
+  const sel=document.getElementById('copy-order-select');
+  const id=sel.value;
+  if(!id){alert('Please select an item.');return;}
+  const o=orders.find(x=>x.id===id);
+  if(!o)return;
+  // Pre-fill form
+  const supSel=document.getElementById('o_supplier');
+  if(supSel.tagName==='SELECT'){
+    // Try to find supplier in dropdown
+    Array.from(supSel.options).forEach(opt=>{if(opt.value===o.supplier)supSel.value=opt.value;});
+  } else {
+    supSel.value=o.supplier||'';
+  }
+  document.getElementById('o_item').value=o.item||'';
+  document.getElementById('o_color').value=o.color||'';
+  document.getElementById('o_price').value=o.price||'';
+  document.getElementById('o_customs').value=o.customs||'';
+  document.getElementById('o_sell').value=o.sell_price||'';
+  document.getElementById('o_notes').value=o.notes||'';
+  document.getElementById('o_qty').value='';
+  document.getElementById('o_sell').dataset.manual='1';
+  recalcOrderForm();
+  closeModal('copy-order-modal');
+  // Scroll to form
+  document.getElementById('tab-orders').scrollIntoView({behavior:'smooth'});
+}
+
+// ============================================================
 // ORDERS
 // ============================================================
 let orders=[];
@@ -2085,7 +2159,7 @@ function setInvFilter(filter){
 }
 
 function renderInventory(){
-  const {stock,meta}=buildInventory();
+  const {stock,meta,orderRefs}=buildInventory();
   const allKeys=Object.keys(meta);
   const el=document.getElementById('inv-content');
   const countEl=document.getElementById('inv-count');
@@ -2115,6 +2189,8 @@ function renderInventory(){
     const isOos=qty<=0;
     const isLow=qty>0&&qty<=3;
     const isPrev=m.month<curMonth;
+    const refs=orderRefs[k]||[];
+    const orderCount=refs.length;
     return`<div class="inv-card ${isOos?'out-of-stock':isLow?'low-stock':''}">
       ${m.image_url?`<img src="${m.image_url}" style="width:100%;height:120px;object-fit:cover;border-radius:8px;margin-bottom:10px;border:1px solid var(--border);">`:'<div style="width:100%;height:80px;background:var(--beige-dark);border-radius:8px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;color:var(--text-light);font-size:11px;">No photo</div>'}
       ${m.order_ref?`<div style="font-family:'Courier New',monospace;font-size:11px;background:var(--teal-bg);padding:2px 7px;border-radius:5px;color:var(--teal-dark);font-weight:600;display:inline-block;margin-bottom:6px;">${m.order_ref}</div>`:''}
@@ -2122,6 +2198,10 @@ function renderInventory(){
       <div class="inv-item-color">${m.color||'No color specified'}</div>
       <div class="inv-stock ${isOos?'out':isLow?'low':''}">${qty}</div>
       <div class="inv-stock-label">units in stock</div>
+      <div class="inv-price" style="margin-top:4px;">
+        <span style="font-size:10px;color:var(--text-light);">From ${orderCount} order${orderCount!==1?'s':''}: </span>
+        <span style="font-size:10px;color:#33412F;">${refs.map(r=>r.ref+'('+r.qty+')').join(', ')}</span>
+      </div>
       <div class="inv-price">Sell: ${m.sell_price>0?fmtXCG(m.sell_price):'&#8212;'}</div>
       <div class="inv-price">Supplier: ${m.supplier||'&#8212;'}</div>
       ${isPrev?`<div class="inv-prev-badge"><span class="badge badge-prev">carried over from ${monthLabel(m.month)}</span></div>`:''}
