@@ -318,6 +318,7 @@ tbody tr:last-child td{border-bottom:none;}
     <div class="tab" onclick="switchTab('suppliers',this)">&#127981; Suppliers</div>
     <div class="tab" onclick="switchTab('customers',this)">&#128101; Customers</div>
     <div class="tab" onclick="switchTab('claims',this)">&#9888;&#65039; Claims</div>
+    <div class="tab" onclick="switchTab('requests',this)">&#128203; Requests</div>
     <div class="tab" onclick="switchTab('sales',this)">&#128176; Sales & Invoices</div>
     <div class="tab" onclick="switchTab('inventory',this)">&#128202; Inventory</div>
     <div class="tab" onclick="switchTab('monthly',this)">&#128197; Monthly</div>
@@ -448,6 +449,86 @@ tbody tr:last-child td{border-bottom:none;}
         <div id="claims-empty" class="empty" style="display:none;">
           <div class="empty-icon">&#9989;</div>
           <p>No claims yet &mdash; great news! &#127881;</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- REQUESTS TAB -->
+    <div id="tab-requests" class="tab-panel">
+
+      <!-- Stats -->
+      <div class="stats" id="requests-stats"></div>
+
+      <!-- Add Request Form -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">Add Client Request</span></div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Customer</label>
+            <select id="req_customer">
+              <option value="">&#8212; Choose customer &#8212;</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Date Requested</label>
+            <input type="date" id="req_date">
+          </div>
+          <div class="form-group" style="grid-column:span 2">
+            <label>Item Requested</label>
+            <input type="text" id="req_item" placeholder="e.g. Gold beaded bracelet or specific item name">
+          </div>
+          <div class="form-group">
+            <label>Color / Preference</label>
+            <input type="text" id="req_color" placeholder="e.g. Pink, Mixed colors">
+          </div>
+          <div class="form-group">
+            <label>Agreed Price (XCG)</label>
+            <input type="number" id="req_price" placeholder="0.00" step="0.01">
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select id="req_status">
+              <option value="Pending">&#9203; Pending</option>
+              <option value="Ordered">&#128230; Ordered</option>
+              <option value="Ready">&#9989; Ready for pickup/delivery</option>
+              <option value="Delivered">&#127381; Delivered</option>
+            </select>
+          </div>
+          <div class="form-group" style="grid-column:span 2">
+            <label>Notes</label>
+            <textarea id="req_notes" placeholder="e.g. Needs it before June 15, wants 2 pieces..."></textarea>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" onclick="addRequest()">+ Add Request</button>
+          <button class="btn btn-secondary" onclick="clearRequestForm()">Clear</button>
+        </div>
+      </div>
+
+      <!-- Requests Table -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Client Requests</span>
+          <span id="requests-count" style="font-size:12px;color:var(--text-light);"></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Date</th>
+              <th>Customer</th>
+              <th>Item</th>
+              <th>Color</th>
+              <th>Price (XCG)</th>
+              <th>Status</th>
+              <th>Notes</th>
+              <th></th>
+            </tr></thead>
+            <tbody id="requests-body"></tbody>
+          </table>
+        </div>
+        <div id="requests-empty" class="empty" style="display:none;">
+          <div class="empty-icon">&#128203;</div>
+          <p>No requests yet &#8212; add your first one above</p>
         </div>
       </div>
     </div>
@@ -844,6 +925,7 @@ async function launchApp(){
   document.getElementById('main-app').style.display='block';
   setSyncStatus('syncing','Loading...');
   if(document.getElementById('s_date'))document.getElementById('s_date').value=new Date().toISOString().split('T')[0];
+  if(document.getElementById('req_date'))document.getElementById('req_date').value=new Date().toISOString().split('T')[0];
 
   // Load each table completely independently
   const results = await Promise.allSettled([
@@ -890,6 +972,7 @@ function switchTab(name,el){
     try{updateInvNumberPreview();}catch(e){}
   }
   if(name==='claims'){renderClaims();populateClaimOrderDropdown();}
+  if(name==='requests'){renderRequests();populateRequestCustomerDropdown();}
 }
 
 // ============================================================
@@ -1088,6 +1171,7 @@ async function loadCustomers(){
     customers=await sbSelect('customers');
     try{renderCustomers();}catch(e){}
     try{populateCustomerDropdown();}catch(e){}
+    try{populateRequestCustomerDropdown();}catch(e){}
   }catch(e){console.error('loadCustomers failed:',e);customers=[];}
 }
 
@@ -1379,6 +1463,153 @@ async function deleteSupplier(id){
     renderSuppliers();populateSupplierDropdown();
     setSyncStatus('synced','Synced ✓');
   }catch(e){setSyncStatus('error','Delete failed');}
+}
+
+// ============================================================
+// CLIENT REQUESTS
+// ============================================================
+let requests=[];
+
+async function loadRequests(){
+  try{
+    requests=await sbSelect('requests');
+    renderRequests();
+  }catch(e){console.error('loadRequests failed:',e);}
+}
+
+function populateRequestCustomerDropdown(){
+  const sel=document.getElementById('req_customer');
+  if(!sel)return;
+  const cur=sel.value;
+  sel.innerHTML='<option value="">&#8212; Choose customer &#8212;</option>';
+  customers.forEach(c=>{
+    const opt=document.createElement('option');
+    opt.value=c.name;
+    opt.textContent=c.name;
+    sel.appendChild(opt);
+  });
+  const other=document.createElement('option');
+  other.value='__other__';
+  other.textContent='+ Other';
+  sel.appendChild(other);
+  if(cur)sel.value=cur;
+}
+
+async function addRequest(){
+  const custSel=document.getElementById('req_customer');
+  const customer=custSel.value==='__other__'?'Other':custSel.value;
+  const date=document.getElementById('req_date').value;
+  const item=document.getElementById('req_item').value.trim();
+  const color=document.getElementById('req_color').value.trim();
+  const price=parseFloat(document.getElementById('req_price').value)||0;
+  const status=document.getElementById('req_status').value;
+  const notes=document.getElementById('req_notes').value.trim();
+  if(!item){alert('Please enter an item.');return;}
+  if(!customer){alert('Please select a customer.');return;}
+  setSyncStatus('syncing','Saving...');
+  try{
+    const res=await sbInsert('requests',{customer,item,color,agreed_price:price,status,notes,created_at:date?new Date(date).toISOString():new Date().toISOString()});
+    requests.push(res[0]);
+    renderRequests();
+    clearRequestForm();
+    setSyncStatus('synced','Synced ✓');
+  }catch(e){setSyncStatus('error','Save failed');alert('Could not save: '+e.message);}
+}
+
+function clearRequestForm(){
+  ['req_date','req_item','req_color','req_price','req_notes'].forEach(id=>{
+    const el=document.getElementById(id);if(el)el.value='';
+  });
+  const sel=document.getElementById('req_customer');if(sel)sel.value='';
+  const stat=document.getElementById('req_status');if(stat)stat.value='Pending';
+  const dateEl=document.getElementById('req_date');
+  if(dateEl)dateEl.value=new Date().toISOString().split('T')[0];
+}
+
+async function updateRequestStatus(id,status){
+  setSyncStatus('syncing','Saving...');
+  try{
+    await sbUpdate('requests',id,{status});
+    const idx=requests.findIndex(r=>r.id===id);
+    if(idx>=0)requests[idx].status=status;
+    renderRequests();
+    setSyncStatus('synced','Synced ✓');
+  }catch(e){setSyncStatus('error','Save failed');}
+}
+
+async function deleteRequest(id){
+  if(!confirm('Delete this request?'))return;
+  setSyncStatus('syncing','Deleting...');
+  try{
+    await sbDelete('requests',id);
+    requests=requests.filter(r=>r.id!==id);
+    renderRequests();
+    setSyncStatus('synced','Synced ✓');
+  }catch(e){setSyncStatus('error','Delete failed');}
+}
+
+function renderRequests(){
+  const tbody=document.getElementById('requests-body');
+  const empty=document.getElementById('requests-empty');
+  const count=document.getElementById('requests-count');
+  const statsEl=document.getElementById('requests-stats');
+  if(!tbody)return;
+
+  // Stats
+  const pending=requests.filter(r=>r.status==='Pending').length;
+  const ordered=requests.filter(r=>r.status==='Ordered').length;
+  const ready=requests.filter(r=>r.status==='Ready').length;
+  const delivered=requests.filter(r=>r.status==='Delivered').length;
+  if(statsEl)statsEl.innerHTML=`
+    <div class="stat-card"><div class="stat-label">Total Requests</div><div class="stat-value">${requests.length}</div></div>
+    <div class="stat-card"><div class="stat-label">Pending</div><div class="stat-value ${pending>0?'red':''}">${pending}</div></div>
+    <div class="stat-card"><div class="stat-label">Ordered</div><div class="stat-value" style="color:var(--orange);">${ordered}</div></div>
+    <div class="stat-card"><div class="stat-label">Ready</div><div class="stat-value green">${ready}</div></div>
+    <div class="stat-card"><div class="stat-label">Delivered</div><div class="stat-value">${delivered}</div></div>`;
+
+  if(!requests.length){
+    tbody.innerHTML='';
+    empty.style.display='block';
+    if(count)count.textContent='';
+    return;
+  }
+  empty.style.display='none';
+  if(count)count.textContent=requests.length+' requests';
+
+  const statusColors={
+    'Pending':'var(--orange)',
+    'Ordered':'#2196F3',
+    'Ready':'var(--green)',
+    'Delivered':'var(--text-light)'
+  };
+  const statusIcons={
+    'Pending':'&#9203;',
+    'Ordered':'&#128230;',
+    'Ready':'&#9989;',
+    'Delivered':'&#127381;'
+  };
+
+  // Sort: Pending first, then Ordered, then Ready, then Delivered
+  const order={'Pending':0,'Ordered':1,'Ready':2,'Delivered':3};
+  const sorted=[...requests].sort((a,b)=>(order[a.status]||0)-(order[b.status]||0));
+
+  tbody.innerHTML=sorted.map(r=>`<tr style="${r.status==='Delivered'?'opacity:0.6;':''}">
+    <td style="font-size:12px;color:var(--text-light);">${r.created_at?r.created_at.split('T')[0]:'&#8212;'}</td>
+    <td style="font-weight:500;">${r.customer||'&#8212;'}</td>
+    <td>${r.item}</td>
+    <td>${r.color||'&#8212;'}</td>
+    <td>${r.agreed_price>0?fmtXCG(r.agreed_price):'&#8212;'}</td>
+    <td>
+      <select onchange="updateRequestStatus('${r.id}',this.value)" style="border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;color:${statusColors[r.status]||'inherit'};background:var(--beige);outline:none;cursor:pointer;font-weight:500;">
+        <option ${r.status==='Pending'?'selected':''} value="Pending">&#9203; Pending</option>
+        <option ${r.status==='Ordered'?'selected':''} value="Ordered">&#128230; Ordered</option>
+        <option ${r.status==='Ready'?'selected':''} value="Ready">&#9989; Ready</option>
+        <option ${r.status==='Delivered'?'selected':''} value="Delivered">&#127381; Delivered</option>
+      </select>
+    </td>
+    <td style="color:var(--text-light);font-size:12px;max-width:150px;">${r.notes||''}</td>
+    <td><button class="del-btn" onclick="deleteRequest('${r.id}')">&#10005;</button></td>
+  </tr>`).join('');
 }
 
 // ============================================================
@@ -1942,6 +2173,7 @@ function clearInvoiceForm(){
   const dd=document.getElementById('inv_discount_display');if(dd)dd.textContent='-XCG 0.00';
   const td=document.getElementById('inv_total_display');if(td)td.textContent='XCG 0.00';
   if(document.getElementById('s_date'))document.getElementById('s_date').value=new Date().toISOString().split('T')[0];
+  if(document.getElementById('req_date'))document.getElementById('req_date').value=new Date().toISOString().split('T')[0];
   lineItems=[];
   renderLineItems();
   recalcInvoice();
