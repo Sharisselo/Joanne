@@ -475,7 +475,11 @@ tbody tr:last-child td{border-bottom:none;}
           </div>
           <div class="form-group" style="grid-column:span 2">
             <label>Item Requested</label>
-            <input type="text" id="req_item" placeholder="e.g. Gold beaded bracelet or specific item name">
+            <select id="req_item_select" onchange="onReqItemSelect()" style="border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-family:'Jost',sans-serif;font-size:13px;color:var(--text);background:var(--beige);outline:none;width:100%;margin-bottom:6px;">
+              <option value="">&#8212; Choose from inventory or type below &#8212;</option>
+            </select>
+            <input type="text" id="req_item" placeholder="Or type a specific item not in inventory...">
+            <div style="font-size:11px;color:var(--text-light);margin-top:3px;">Selecting from inventory auto-fills the item name. You can edit it below.</div>
           </div>
           <div class="form-group">
             <label>Color / Preference</label>
@@ -972,7 +976,7 @@ function switchTab(name,el){
     try{updateInvNumberPreview();}catch(e){}
   }
   if(name==='claims'){renderClaims();populateClaimOrderDropdown();}
-  if(name==='requests'){renderRequests();populateRequestCustomerDropdown();}
+  if(name==='requests'){renderRequests();populateRequestCustomerDropdown();populateReqItemDropdown();}
 }
 
 // ============================================================
@@ -1477,6 +1481,52 @@ async function loadRequests(){
   }catch(e){console.error('loadRequests failed:',e);}
 }
 
+function populateReqItemDropdown(){
+  const sel=document.getElementById('req_item_select');
+  if(!sel)return;
+  sel.innerHTML='<option value="">&#8212; Choose from inventory or type below &#8212;</option>';
+  // Add all unique items from orders
+  const seen=new Set();
+  orders.forEach(o=>{
+    const ref=o.order_ref||o.id;
+    const label=(o.order_ref?o.order_ref+' · ':'')+o.item+(o.color?' ('+o.color+')':'');
+    if(seen.has(label))return;
+    seen.add(label);
+    const opt=document.createElement('option');
+    opt.value=o.item+(o.color?' ('+o.color+')':'');
+    opt.textContent=label;
+    opt.dataset.color=o.color||'';
+    sel.appendChild(opt);
+  });
+  // Add separator and custom option
+  const sep=document.createElement('option');
+  sep.disabled=true;
+  sep.textContent='&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;';
+  sel.appendChild(sep);
+  const other=document.createElement('option');
+  other.value='__custom__';
+  other.textContent='+ Type a custom item below';
+  sel.appendChild(other);
+}
+
+function onReqItemSelect(){
+  const sel=document.getElementById('req_item_select');
+  const opt=sel.options[sel.selectedIndex];
+  if(!opt||opt.value===''||opt.value==='__custom__'){
+    // clear or let user type
+    if(opt&&opt.value==='__custom__'){
+      document.getElementById('req_item').value='';
+      document.getElementById('req_item').focus();
+    }
+    return;
+  }
+  // Auto-fill item name and color
+  document.getElementById('req_item').value=opt.value;
+  if(opt.dataset.color&&document.getElementById('req_color')){
+    document.getElementById('req_color').value=opt.dataset.color;
+  }
+}
+
 function populateRequestCustomerDropdown(){
   const sel=document.getElementById('req_customer');
   if(!sel)return;
@@ -1521,6 +1571,7 @@ function clearRequestForm(){
     const el=document.getElementById(id);if(el)el.value='';
   });
   const sel=document.getElementById('req_customer');if(sel)sel.value='';
+  const isel=document.getElementById('req_item_select');if(isel)isel.value='';
   const stat=document.getElementById('req_status');if(stat)stat.value='Pending';
   const dateEl=document.getElementById('req_date');
   if(dateEl)dateEl.value=new Date().toISOString().split('T')[0];
