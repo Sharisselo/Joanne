@@ -1477,8 +1477,8 @@ let requests=[];
 async function loadRequests(){
   try{
     requests=await sbSelect('requests');
-    renderRequests();
-  }catch(e){console.error('loadRequests failed:',e);}
+    try{renderRequests();}catch(e){console.log('renderRequests error:',e);}
+  }catch(e){console.error('loadRequests failed:',e);requests=[];}
 }
 
 function populateReqItemDropdown(){
