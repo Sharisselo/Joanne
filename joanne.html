@@ -937,13 +937,14 @@ async function launchApp(){
     loadSales(),
     loadSuppliers(),
     loadCustomers(),
-    loadClaims()
+    loadClaims(),
+    loadRequests()
   ]);
 
   // Log any failures but don't block
   results.forEach((r,i)=>{
     if(r.status==='rejected'){
-      const names=['orders','sales','suppliers','customers','claims'];
+      const names=['orders','sales','suppliers','customers','claims','requests'];
       console.error('Failed to load '+names[i]+':',r.reason);
     }
   });
