@@ -208,6 +208,57 @@ tbody tr:last-child td{border-bottom:none;}
   </div>
 </div>
 
+<!-- REORDER MODAL -->
+<div class="modal-overlay" id="reorder-modal">
+  <div class="modal" style="max-width:560px;">
+    <div class="modal-header">
+      <span class="modal-title">Reorder Item</span>
+      <button class="modal-close" onclick="closeModal('reorder-modal')">&times;</button>
+    </div>
+    <div style="padding:16px 20px;background:var(--beige-dark);border-bottom:1px solid var(--border);">
+      <div style="font-size:12px;color:var(--text-light);letter-spacing:0.5px;margin-bottom:4px;">REORDERING</div>
+      <div id="reorder-item-name" style="font-size:16px;font-weight:600;color:#33412F;"></div>
+      <div id="reorder-item-color" style="font-size:13px;color:var(--text-light);margin-top:2px;"></div>
+    </div>
+    <div class="form-grid" style="padding:16px 20px;">
+      <div class="form-group">
+        <label>Supplier</label>
+        <select id="ro_supplier" onchange="onReorderSupplierChange()">
+          <option value="">&#8212; Choose supplier &#8212;</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Quantity</label>
+        <input type="number" id="ro_qty" placeholder="0" min="1">
+      </div>
+      <div class="form-group">
+        <label>Item Price (USD)</label>
+        <input type="number" id="ro_price" placeholder="0.00" step="0.01" oninput="recalcReorder()">
+      </div>
+      <div class="form-group">
+        <label>Customs / Shipping (XCG)</label>
+        <input type="number" id="ro_customs" placeholder="0.00" step="0.01" oninput="recalcReorder()">
+      </div>
+      <div class="form-group">
+        <label>Suggested Sell Price (XCG)</label>
+        <input type="number" id="ro_sell" placeholder="Auto-calculated" step="0.01">
+      </div>
+      <div class="form-group">
+        <label>Order Reference (auto)</label>
+        <input type="text" id="ro_ref" placeholder="JO-XXX" readonly style="opacity:0.6;">
+      </div>
+      <div class="form-group" style="grid-column:span 2;">
+        <label>Notes</label>
+        <textarea id="ro_notes" placeholder="Optional notes..."></textarea>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('reorder-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveReorder()">&#128230; Add to Orders</button>
+    </div>
+  </div>
+</div>
+
 <!-- EDIT ORDER MODAL -->
 <div class="modal-overlay" id="edit-order-modal">
   <div class="modal">
@@ -1805,6 +1856,120 @@ function copyOrderToForm(){
   closeModal('copy-order-modal');
   // Scroll to form
   document.getElementById('tab-orders').scrollIntoView({behavior:'smooth'});
+}
+
+// ============================================================
+// REORDER
+// ============================================================
+let reorderItem='';
+let reorderColor='';
+
+function openReorder(item, color){
+  reorderItem=item;
+  reorderColor=color;
+
+  // Set item display
+  const nameEl=document.getElementById('reorder-item-name');
+  const colorEl=document.getElementById('reorder-item-color');
+  if(nameEl)nameEl.textContent=item;
+  if(colorEl)colorEl.textContent=color?'Color: '+color:'No color specified';
+
+  // Pre-fill supplier dropdown
+  const supSel=document.getElementById('ro_supplier');
+  if(supSel){
+    supSel.innerHTML='<option value="">&#8212; Choose supplier &#8212;</option>';
+    suppliers.forEach(s=>{
+      const opt=document.createElement('option');
+      opt.value=s.name;
+      opt.textContent=s.name;
+      supSel.appendChild(opt);
+    });
+    // Try to pre-select last used supplier for this item
+    const lastOrder=orders.filter(o=>o.item===item&&(o.color||'')===color).pop();
+    if(lastOrder&&lastOrder.supplier)supSel.value=lastOrder.supplier;
+    // Pre-fill last sell price
+    if(lastOrder&&lastOrder.sell_price){
+      document.getElementById('ro_sell').value=lastOrder.sell_price;
+    }
+  }
+
+  // Set next order ref
+  const refEl=document.getElementById('ro_ref');
+  if(refEl){
+    const nums=orders.map(o=>parseInt((o.order_ref||'').replace('JO-',''))).filter(n=>!isNaN(n));
+    const next=nums.length?Math.max(...nums)+1:1;
+    refEl.value='JO-'+String(next).padStart(3,'0');
+  }
+
+  // Clear other fields
+  ['ro_qty','ro_price','ro_customs','ro_notes'].forEach(id=>{
+    const el=document.getElementById(id);if(el)el.value='';
+  });
+
+  document.getElementById('reorder-modal').classList.add('open');
+}
+
+function onReorderSupplierChange(){}
+
+function recalcReorder(){
+  const price=parseFloat(document.getElementById('ro_price').value)||0;
+  const customs=parseFloat(document.getElementById('ro_customs').value)||0;
+  const rate=parseFloat(document.getElementById('markup-rate')?.value||document.querySelector('[id*="rate"]')?.value)||1.82;
+  const markup=parseFloat(document.getElementById('markup-mult')?.value||document.querySelector('[id*="mult"]')?.value)||2.5;
+  if(price>0){
+    const grandXCG=(price*rate)+customs;
+    const suggested=grandXCG*markup;
+    document.getElementById('ro_sell').value=suggested.toFixed(2);
+  }
+}
+
+async function saveReorder(){
+  const supplier=document.getElementById('ro_supplier').value;
+  const qty=parseInt(document.getElementById('ro_qty').value)||0;
+  const price=parseFloat(document.getElementById('ro_price').value)||0;
+  const customs=parseFloat(document.getElementById('ro_customs').value)||0;
+  const sell=parseFloat(document.getElementById('ro_sell').value)||0;
+  const notes=document.getElementById('ro_notes').value.trim();
+  const order_ref=document.getElementById('ro_ref').value;
+  const rate=parseFloat(document.getElementById('markup-rate')?.value||1.82);
+
+  if(qty<1){alert('Please enter a quantity.');return;}
+  if(!supplier){alert('Please select a supplier.');return;}
+
+  const total_usd=price*qty;
+  const total_xcg=total_usd*rate;
+  const grand_xcg=total_xcg+customs;
+
+  setSyncStatus('syncing','Saving...');
+  try{
+    const row={
+      item:reorderItem,
+      color:reorderColor,
+      supplier,
+      qty,
+      price,
+      customs,
+      sell_price:sell,
+      total_usd,
+      total_xcg,
+      grand_xcg,
+      notes,
+      order_ref,
+      rate
+    };
+    const res=await sbInsert('orders',row);
+    orders.push(res[0]);
+    renderOrders();
+    renderInventory();
+    try{populateSaleItemDropdown();}catch(e){}
+    closeModal('reorder-modal');
+    setSyncStatus('synced','Synced ✓');
+    // Switch to orders tab to show the new order
+    switchTab('orders',document.querySelector('[onclick*="orders"]'));
+  }catch(e){
+    setSyncStatus('error','Save failed');
+    alert('Could not save: '+e.message);
+  }
 }
 
 // ============================================================
