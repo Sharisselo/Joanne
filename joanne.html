@@ -1033,71 +1033,50 @@ function invKeyFull(item,color,supplier){
 }
 
 function buildInventory(){
-  // Each order ref = its own inventory slot
+  // Group by item+color — one card per unique item regardless of supplier
   const stock={};
   const meta={};
+  const orderRefs={};
 
   orders.forEach(o=>{
-    const ref=o.order_ref||o.id;
-    stock[ref]=(stock[ref]||0)+(o.qty||0);
-    meta[ref]={
+    const k=invKey(o.item,o.color);
+    stock[k]=(stock[k]||0)+(o.qty||0);
+    if(!orderRefs[k])orderRefs[k]=[];
+    orderRefs[k].push({ref:o.order_ref||o.id,qty:o.qty||0,supplier:o.supplier||''});
+    const existingImg=(meta[k]&&meta[k].image_url)||'';
+    meta[k]={
       item:o.item,
       color:o.color||'',
       sell_price:o.sell_price||0,
       supplier:o.supplier||'',
       month:getEntryMonth(o.created_at),
-      order_ref:ref,
+      order_ref:o.order_ref||o.id,
       id:o.id,
-      image_url:o.image_url||''
+      image_url:o.image_url||existingImg
     };
   });
 
-  // Track name+color -> refs for sales deduction
-  const nameToRefs={};
-  orders.forEach(o=>{
-    const ref=o.order_ref||o.id;
-    const nk=(o.item+'||'+(o.color||'')).toLowerCase();
-    if(!nameToRefs[nk])nameToRefs[nk]=[];
-    nameToRefs[nk].push(ref);
-  });
-
-  // Deduct sales - use order_ref directly if available, else match by name+color
+  // Deduct sales - try order_ref match first then item+color
   invoices.forEach(inv=>{
     (inv.invoice_items||[]).forEach(li=>{
-      if(li.order_ref&&stock[li.order_ref]!==undefined){
-        // Direct deduction by order ref - most accurate
-        stock[li.order_ref]=(stock[li.order_ref]||0)-(li.qty||0);
-      } else {
-        // Fallback: match by name+color, deduct from oldest first
-        const nk=((li.item||'')+'||'+(li.item_color||'')).toLowerCase();
-        const refs=nameToRefs[nk]||[];
-        let remaining=li.qty||0;
-        for(const ref of refs){
-          if(remaining<=0)break;
-          const avail=stock[ref]||0;
-          const deduct=Math.min(avail,remaining);
-          stock[ref]-=deduct;
-          remaining-=deduct;
-        }
+      if(li.order_ref){
+        const matchKey=Object.keys(orderRefs).find(k=>
+          orderRefs[k].some(r=>r.ref===li.order_ref)
+        );
+        if(matchKey){stock[matchKey]=(stock[matchKey]||0)-(li.qty||0);return;}
       }
+      const k=invKey(li.item||'',li.item_color||'');
+      if(stock[k]!==undefined)stock[k]-=(li.qty||0);
     });
   });
 
   // Deduct claims
   claims.forEach(c=>{
-    const nk=((c.item||'')+'||'+(c.item_color||'')).toLowerCase();
-    const refs=nameToRefs[nk]||[];
-    let remaining=c.qty_affected||0;
-    for(const ref of refs){
-      if(remaining<=0)break;
-      const avail=stock[ref]||0;
-      const deduct=Math.min(avail,remaining);
-      stock[ref]-=deduct;
-      remaining-=deduct;
-    }
+    const k=invKey(c.item||'',c.item_color||'');
+    if(stock[k]!==undefined)stock[k]-=(c.qty_affected||0);
   });
 
-  return{stock,meta,orderRefs:{}};
+  return{stock,meta,orderRefs};
 }
 
 
@@ -1748,12 +1727,30 @@ async function saveEditCustomer(){
 // SALE ITEM DROPDOWN (for inventory/claims - references orders)
 // ============================================================
 function populateSaleItemDropdown(){
-  // Refresh all line item selects in the invoice form
-  try{populateClaimOrderDropdown();}catch(e){}
-  // Refresh line items if any exist
-  if(lineItems&&lineItems.length>0){
-    try{renderLineItems();}catch(e){}
-  }
+  const sel=document.getElementById('s_item_select');
+  const cur=sel.value;
+  const {stock}=buildInventory();
+  sel.innerHTML='<option value="">&#8212; Choose item &#8212;</option>';
+  const seen=new Set();
+  orders.forEach(o=>{
+    const k=invKey(o.item,o.color);
+    if(seen.has(k))return;
+    seen.add(k);
+    const qty=stock[k]||0;
+    const oos=qty<=0;
+    const label=o.item+(o.color?' ('+o.color+')':'')+(oos?' — OUT OF STOCK':' — '+qty+' in stock');
+    const opt=document.createElement('option');
+    opt.value=k;
+    opt.textContent=label;
+    opt.dataset.item=o.item;
+    opt.dataset.color=o.color||'';
+    opt.dataset.price=o.sell_price||0;
+    opt.dataset.oos=oos?'1':'0';
+    opt.dataset.ref=o.order_ref||o.id;
+    if(oos)opt.style.color='#999';
+    sel.appendChild(opt);
+  });
+  if(cur)sel.value=cur;
 }
 
 function onSaleItemSelect(){}
@@ -2086,13 +2083,17 @@ function updateInvNumberPreview(){
 function createLineItemRow(idx, item='', color='', orderRef='', qty=1, price=0){
   const {stock}=buildInventory();
   let opts='<option value="">&#8212; Choose item &#8212;</option>';
+  const seen=new Set();
   orders.forEach(o=>{
-    const ref=o.order_ref||o.id;
-    const q=stock[ref]||0;
+    const k=invKey(o.item,o.color);
+    if(seen.has(k))return;
+    seen.add(k);
+    const q=stock[k]||0;
     const oos=q<=0;
-    const label=(o.order_ref?o.order_ref+' · ':'')+o.item+(o.color?' ('+o.color+')':'')+( oos?' — OUT OF STOCK':' — '+q+' in stock');
-    const sel=(orderRef===ref)?'selected':'';
-    opts+='<option value="'+ref+'" data-item="'+o.item+'" data-color="'+(o.color||'')+'" data-price="'+(o.sell_price||0)+'" data-ref="'+ref+'" '+sel+'>'+label+'</option>';
+    const label=o.item+(o.color?' ('+o.color+')':'')+( oos?' — OUT OF STOCK':' — '+q+' in stock');
+    const isMatch=invKey(item,color)===k;
+    const sel=isMatch?'selected':'';
+    opts+='<option value="'+k+'" data-item="'+o.item+'" data-color="'+(o.color||'')+'" data-price="'+(o.sell_price||0)+'" data-ref="'+(o.order_ref||o.id)+'" '+sel+'>'+label+'</option>';
   });
   return'<div class="line-item-row" id="li-'+idx+'" style="display:grid;grid-template-columns:2fr 80px 120px 100px 32px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--beige-mid);">'
     +'<select onchange="onLineItemSelect('+idx+',this)" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:Jost,sans-serif;font-size:12px;background:var(--beige);outline:none;">'+opts+'</select>'
@@ -2442,314 +2443,4 @@ function generateInvoicePDF(id){
       <td style="padding:10px 14px;border-bottom:1px solid #E8E0CC;text-align:right;font-weight:500;">XCG ${parseFloat(li.subtotal).toFixed(2)}</td>
     </tr>`).join('');
 
-  const invoiceHTML=`<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<style>
-  *{box-sizing:border-box;margin:0;padding:0;}
-  body{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;background:#fff;color:#2C2C2C;font-size:13px;}
-  .page{max-width:700px;margin:0 auto;padding:40px;}
-  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px;padding-bottom:20px;border-bottom:2px solid #FBA0A3;}
-  .logo{height:100px;width:auto;}
-  .invoice-meta{text-align:right;}
-  .invoice-title{font-size:28px;font-weight:300;color:#33412F;letter-spacing:2px;text-transform:uppercase;}
-  .invoice-number{font-family:'Courier New',monospace;font-size:16px;font-weight:700;color:#2C2C2C;margin-top:4px;}
-  .invoice-date{font-size:12px;color:#6B6B6B;margin-top:4px;}
-  .billing{display:flex;justify-content:space-between;margin-bottom:28px;}
-  .billing-block h4{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#6B6B6B;margin-bottom:6px;}
-  .billing-block p{font-size:14px;font-weight:500;}
-  .billing-block small{font-size:12px;color:#6B6B6B;}
-  table{width:100%;border-collapse:collapse;margin-bottom:24px;}
-  thead tr{background:#33412F;}
-  th{padding:10px 14px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#fff;font-weight:500;}
-  th:last-child,th:nth-child(3){text-align:right;}
-  th:nth-child(3){text-align:center;}
-  .totals{margin-left:auto;width:260px;}
-  .totals-row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #EDE8E2;font-size:13px;}
-  .totals-row.final{font-size:15px;font-weight:700;color:#33412F;border-bottom:none;padding-top:10px;}
-  .totals-row.paid{color:#2E7D4F;}
-  .totals-row.balance{color:${inv.balance>0?'#C0392B':'#2E7D4F'};}
-  .footer{margin-top:32px;padding-top:20px;border-top:1px solid #EDE8E2;text-align:center;}
-  .footer p{font-size:11px;color:#6B6B6B;margin-bottom:4px;}
-  .footer .thank-you{font-size:16px;color:#FBA0A3;font-weight:300;letter-spacing:1px;margin-bottom:8px;}
-  .status-badge{display:inline-block;padding:4px 14px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-top:6px;background:${inv.status==='Paid'?'#e8f5ee':inv.status==='Partial'?'#fff3e0':'#fdecea'};color:${inv.status==='Paid'?'#2E7D4F':inv.status==='Partial'?'#D4721A':'#C0392B'};}
-</style>
-</head>
-<body>
-<div class="page">
-  <div class="header">
-    <img src="data:image/png;base64,${logoB64}" class="logo" alt="Joanne">
-    <div class="invoice-meta">
-      <div class="invoice-title">Invoice</div>
-      <div class="invoice-number">${inv.invoice_number||'INV-000'}</div>
-      <div class="invoice-date">${inv.sale_date||new Date().toISOString().split('T')[0]}</div>
-      <div><span class="status-badge">${inv.status}</span></div>
-    </div>
-  </div>
-
-  <div class="billing">
-    <div class="billing-block">
-      <h4>From</h4>
-      <p>Joanne Jewelry &amp; More</p>
-      <small>@shopjoanne.cw</small><br>
-      <small>Willemstad, Cura&ccedil;ao</small>
-    </div>
-    <div class="billing-block" style="text-align:right;">
-      <h4>Bill To</h4>
-      <p>${inv.customer||'&#8212;'}</p>
-      ${inv.method?`<small>Payment via ${inv.method}</small>`:''}
-    </div>
-  </div>
-
-  <table>
-    <thead><tr>
-      <th>Ref</th><th>Item</th><th style="text-align:center;">Qty</th>
-      <th style="text-align:right;">Unit Price</th><th style="text-align:right;">Subtotal</th>
-    </tr></thead>
-    <tbody>${itemRows}</tbody>
-  </table>
-
-  <div class="totals">
-    <div class="totals-row"><span>Subtotal</span><span>XCG ${parseFloat(inv.subtotal||inv.total).toFixed(2)}</span></div>
-    ${discountAmt>0?`<div class="totals-row" style="color:#2E7D4F;"><span>Discount ${discountLabel}</span><span>-XCG ${parseFloat(discountAmt).toFixed(2)}</span></div>`:''}
-    ${discountAmt>0?`<div class="totals-row" style="font-weight:600;"><span>Total</span><span>XCG ${parseFloat(inv.total).toFixed(2)}</span></div>`:''}
-    <div class="totals-row paid"><span>Amount Paid</span><span>XCG ${parseFloat(inv.paid).toFixed(2)}</span></div>
-    <div class="totals-row balance final"><span>Balance Due</span><span>XCG ${parseFloat(inv.balance).toFixed(2)}</span></div>
-  </div>
-
-  ${inv.notes?`<div style="margin-top:20px;padding:12px 16px;background:#F5F0E8;border-radius:8px;font-size:12px;color:#6B6B6B;"><strong>Notes:</strong> ${inv.notes}</div>`:''}
-
-  <div class="footer">
-    <p class="thank-you">Thank you for your purchase! &#10084;</p>
-    <p>Questions? DM us on Instagram</p>
-    <p style="color:#FBA0A3;font-weight:500;">@shopjoanne.cw</p>
-    <p style="margin-top:8px;">Willemstad, Cura&ccedil;ao</p>
-  </div>
-</div>
-</body>
-</html>`;
-
-  const win=window.open('','_blank');
-  win.document.write(invoiceHTML);
-  win.document.close();
-  setTimeout(()=>win.print(),800);
-}
-
-// ============================================================
-// INVENTORY
-// ============================================================
-let currentInvFilter = 'all';
-
-function setInvFilter(filter){
-  currentInvFilter = filter;
-  // Update button styles
-  const filters = ['all','in','low','out'];
-  const labels = {all:'All', in:'In Stock', low:'Low Stock', out:'Out of Stock'};
-  const colors = {all:'#33412F', in:'#2E7D4F', low:'#D4721A', out:'#C0392B'};
-  filters.forEach(f => {
-    const el = document.getElementById('inv-filter-'+f);
-    if(!el) return;
-    if(f === filter){
-      el.style.background = colors[f];
-      el.style.borderColor = colors[f];
-      el.style.color = 'white';
-      el.style.fontWeight = '600';
-    } else {
-      el.style.background = 'transparent';
-      el.style.borderColor = 'var(--border)';
-      el.style.color = 'var(--text-light)';
-      el.style.fontWeight = '400';
-    }
-  });
-  renderInventory();
-}
-
-function renderInventory(){
-  const {stock,meta,orderRefs}=buildInventory();
-  const allKeys=Object.keys(meta);
-  const el=document.getElementById('inv-content');
-  const countEl=document.getElementById('inv-count');
-  if(!allKeys.length){el.innerHTML='<div class="empty"><div class="empty-icon">&#128202;</div><p>Add orders to see inventory</p></div>';return;}
-  const curMonth=getCurrentMonth();
-
-  // Apply filter
-  const keys=allKeys.filter(k=>{
-    const qty=stock[k]||0;
-    if(currentInvFilter==='all') return true;
-    if(currentInvFilter==='out') return qty<=0;
-    if(currentInvFilter==='low') return qty>0&&qty<=3;
-    if(currentInvFilter==='in') return qty>3;
-    return true;
-  });
-
-  if(!keys.length){
-    el.innerHTML='<div class="empty"><div class="empty-icon">&#128202;</div><p>No items match this filter</p></div>';
-    if(countEl)countEl.textContent='0 items';
-    return;
-  }
-  if(countEl)countEl.textContent=keys.length+' item'+(keys.length!==1?'s':'');
-
-  // Sort keys by JO number
-  keys.sort((a,b)=>{
-    const na=parseInt((a||'0').replace(/[^0-9]/g,''))||0;
-    const nb=parseInt((b||'0').replace(/[^0-9]/g,''))||0;
-    return na-nb;
-  });
-
-  const cards = keys.map(k=>{
-    const m=meta[k];
-    const qty=stock[k]||0;
-    const isOos=qty<=0;
-    const isLow=qty>0&&qty<=3;
-    const isPrev=m.month<curMonth;
-    const orderCount=1;
-    const refs=[{ref:k,qty:m.qty}];
-    const imgHtml=m.image_url
-      ?'<img src="'+m.image_url+'" style="width:100%;height:120px;object-fit:cover;border-radius:8px;margin-bottom:10px;border:1px solid var(--border);">'
-      :'<div style="width:100%;height:80px;background:var(--beige-dark);border-radius:8px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;color:var(--text-light);font-size:11px;">No photo</div>';
-    const refHtml=m.order_ref
-      ?'<div style="font-family:monospace;font-size:11px;background:#F5F7F4;padding:2px 7px;border-radius:5px;color:#33412F;font-weight:600;display:inline-block;margin-bottom:6px;">'+m.order_ref+'</div>'
-      :'';
-    const prevHtml=isPrev
-      ?'<div class="inv-prev-badge"><span class="badge badge-prev">carried over from '+monthLabel(m.month)+'</span></div>'
-      :'';
-    const oosHtml=isOos?'<div style="margin-top:6px;font-size:11px;color:var(--red);font-weight:600;">OUT OF STOCK</div>':'';
-    const lowHtml=isLow&&!isOos?'<div style="margin-top:6px;font-size:11px;color:var(--orange);font-weight:600;">LOW STOCK</div>':'';
-    const refsText=refs.map(function(r){return r.ref+'('+r.qty+')';}).join(', ');
-    return '<div class="inv-card '+(isOos?'out-of-stock':isLow?'low-stock':'')+'">'
-      +imgHtml
-      +refHtml
-      +'<div class="inv-item-name">'+m.item+'</div>'
-      +'<div class="inv-item-color">'+(m.color||'No color specified')+'</div>'
-      +'<div class="inv-stock '+(isOos?'out':isLow?'low':'')+'">'+qty+'</div>'
-      +'<div class="inv-stock-label">units in stock</div>'
-+''
-      +'<div class="inv-price">Sell: '+(m.sell_price>0?fmtXCG(m.sell_price):'&#8212;')+'</div>'
-      +'<div class="inv-price">Supplier: '+(m.supplier||'&#8212;')+'</div>'
-      +prevHtml+oosHtml+lowHtml
-      +'</div>';
-  });
-  el.innerHTML='<div class="inv-grid">'+cards.join('')+'</div>';
-}
-
-// ============================================================
-// MONTHLY SUMMARY
-// ============================================================
-// Track excluded suppliers for monthly view
-let excludedSuppliers = new Set();
-
-function renderSupplierFilterTags(){
-  const container = document.getElementById('supplier-filter-tags');
-  if(!container) return;
-  // Get all unique suppliers from orders
-  const allSuppliers = [...new Set(orders.map(o=>o.supplier).filter(Boolean))];
-  container.innerHTML = allSuppliers.map(sup => {
-    const isExcluded = excludedSuppliers.has(sup);
-    return `<span onclick="toggleSupplierFilter('${sup}')" style="
-      cursor:pointer;
-      font-size:11px;
-      padding:3px 10px;
-      border-radius:20px;
-      font-family:Jost,sans-serif;
-      letter-spacing:0.5px;
-      border:1px solid ${isExcluded ? '#FBA0A3' : 'var(--border)'};
-      background:${isExcluded ? '#FBA0A3' : 'transparent'};
-      color:${isExcluded ? '#33412F' : 'var(--text-light)'};
-      font-weight:${isExcluded ? '600' : '400'};
-      transition:all 0.2s;
-    ">${isExcluded ? '✕ ' : ''}${sup}</span>`;
-  }).join('');
-}
-
-function toggleSupplierFilter(supplier){
-  if(excludedSuppliers.has(supplier)){
-    excludedSuppliers.delete(supplier);
-  } else {
-    excludedSuppliers.add(supplier);
-  }
-  renderSupplierFilterTags();
-  renderMonthly();
-}
-
-function renderMonthly(){
-  const el=document.getElementById('monthly-content');
-  renderSupplierFilterTags();
-  if(!invoices.length&&!orders.length){el.innerHTML='<div class="empty"><div class="empty-icon">&#128197;</div><p>No data yet</p></div>';return;}
-
-  // Filter orders by excluded suppliers
-  const filteredOrders = orders.filter(o => !excludedSuppliers.has(o.supplier));
-
-  // collect all months
-  const monthsSet=new Set();
-  filteredOrders.forEach(o=>monthsSet.add(getEntryMonth(o.created_at)));
-  invoices.forEach(s=>{if(s.sale_date)monthsSet.add(s.sale_date.substring(0,7));});
-  const months=[...monthsSet].sort().reverse();
-
-  el.innerHTML=`<div class="month-grid">${months.map(ym=>{
-    const label=monthLabel(ym);
-    const mOrders=filteredOrders.filter(o=>getEntryMonth(o.created_at)===ym);
-    const mSales=invoices.filter(s=>s.sale_date&&s.sale_date.substring(0,7)===ym);
-    const totalSpent=mOrders.reduce((s,o)=>s+(o.grand_xcg||0),0);
-    const totalRevenue=mSales.reduce((s,o)=>s+(o.total||0),0);
-    const totalCollected=mSales.reduce((s,o)=>s+(o.paid||0),0);
-    const totalOutstanding=mSales.reduce((s,o)=>s+(o.balance||0),0);
-    const netProfit=totalRevenue-totalSpent;
-    const itemsSold=mSales.reduce((s,o)=>s+(o.qty||0),0);
-    const itemsOrdered=mOrders.reduce((s,o)=>s+(o.qty||0),0);
-    return`<div class="month-card">
-      <div class="month-card-header"><div class="month-card-title">&#128197; ${label}</div></div>
-      <div class="month-card-body">
-        <div class="month-row"><span>Items Ordered</span><span>${itemsOrdered}</span></div>
-        <div class="month-row"><span>Total Spent (XCG)</span><span style="color:var(--red)">${fmtXCG(totalSpent)}</span></div>
-        <div class="month-row"><span>Items Sold</span><span>${itemsSold}</span></div>
-        <div class="month-row"><span>Revenue (XCG)</span><span>${fmtXCG(totalRevenue)}</span></div>
-        <div class="month-row"><span>Collected (XCG)</span><span style="color:var(--green)">${fmtXCG(totalCollected)}</span></div>
-        <div class="month-row"><span>Outstanding (XCG)</span><span style="color:${totalOutstanding>0?'var(--red)':'var(--green)'}">${fmtXCG(totalOutstanding)}</span></div>
-        <div class="month-row total"><span>Net Profit (XCG)</span><span style="color:${netProfit>=0?'var(--green)':'var(--red)'}">${fmtXCG(netProfit)}</span></div>
-        <div style="margin-top:10px;font-size:11px;color:var(--text-light);">${mOrders.length} orders &middot; ${mSales.length} sales</div>
-      </div>
-    </div>`;
-  }).join('')}</div>`;
-}
-
-// ============================================================
-// OVERVIEW
-// ============================================================
-function renderOverview(){
-  const totSpent=orders.reduce((s,o)=>s+(o.grand_xcg||0),0);
-  const totRev=invoices.reduce((s,o)=>s+(o.total||0),0);
-  const totColl=invoices.reduce((s,o)=>s+(o.paid||0),0);
-  const totOut=invoices.reduce((s,o)=>s+(o.balance||0),0);
-  const net=totRev-totSpent;
-  const {stock}=buildInventory();
-  const totalStock=Object.values(stock).reduce((s,v)=>s+(v>0?v:0),0);
-  document.getElementById('overview-stats').innerHTML=`
-    <div class="stat-card"><div class="stat-label">Total Spent (XCG)</div><div class="stat-value red">${fmtXCG(totSpent)}</div></div>
-    <div class="stat-card"><div class="stat-label">Total Revenue (XCG)</div><div class="stat-value">${fmtXCG(totRev)}</div></div>
-    <div class="stat-card"><div class="stat-label">Collected (XCG)</div><div class="stat-value green">${fmtXCG(totColl)}</div></div>
-    <div class="stat-card"><div class="stat-label">Outstanding (XCG)</div><div class="stat-value ${totOut>0?'red':''}">${fmtXCG(totOut)}</div></div>
-    <div class="stat-card"><div class="stat-label">Net Profit (XCG)</div><div class="stat-value ${net>=0?'green':'red'}">${fmtXCG(net)}</div></div>
-    <div class="stat-card"><div class="stat-label">Items in Stock</div><div class="stat-value">${totalStock}</div></div>
-    <div class="stat-card"><div class="stat-label">Total Sales</div><div class="stat-value">${invoices.length}</div></div>`;
-  const unpaid=invoices.filter(s=>s.balance>0);
-  document.getElementById('outstanding-list').innerHTML=unpaid.length===0
-    ?'<p style="color:var(--green);font-size:13px;">&#10003; All sales fully paid!</p>'
-    :unpaid.map(s=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
-        <div><div style="font-weight:500;font-size:13px;">${s.customer||'Unknown'}</div>
-        <div style="font-size:11px;color:var(--text-light);">${s.invoice_number||''} &middot; ${s.sale_date||''}</div></div>
-        <div style="color:var(--red);font-weight:600;font-size:13px;">${fmtXCG(s.balance)}</div>
-      </div>`).join('');
-  const custMap={};
-  invoices.forEach(s=>{const k=s.customer||'Unknown';custMap[k]=(custMap[k]||0)+s.total;});
-  const top=Object.entries(custMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
-  document.getElementById('top-customers').innerHTML=top.length===0
-    ?'<p style="font-size:13px;color:var(--text-light);">No sales yet</p>'
-    :top.map(([name,total])=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
-        <div style="font-weight:500;font-size:13px;">&#10084; ${name}</div>
-        <div style="color:var(--teal);font-weight:600;font-size:13px;">${fmtXCG(total)}</div>
-      </div>`).join('');
-}
-</script>
-</body>
-</html>
+  const invoiceHTML=`
